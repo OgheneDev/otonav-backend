@@ -5,6 +5,8 @@ import cookieParser from "cookie-parser";
 import { authRoutes } from "./routes/auth.routes.js";
 import { errorHandler } from "./middleware/error.middleware.js";
 import dotenv from "dotenv";
+import swaggerUi from "swagger-ui-express";
+import { swaggerSpec } from "./docs/swagger.js";
 
 // Load environment variables
 dotenv.config();
@@ -42,6 +44,11 @@ app.use(cors(corsOptions));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
+
+// Docs
+if (process.env.NODE_ENV !== "production") {
+  app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+}
 
 // Routes
 app.use("/api/auth", authRoutes);
