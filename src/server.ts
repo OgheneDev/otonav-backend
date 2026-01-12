@@ -3,7 +3,6 @@ import helmet from "helmet";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import { authRoutes } from "./routes/auth.routes.js";
-import { devRouter } from "./routes/dev.routes.js";
 import { errorHandler } from "./middleware/error.middleware.js";
 import dotenv from "dotenv";
 
@@ -46,7 +45,6 @@ app.use(cookieParser());
 
 // Routes
 app.use("/api/auth", authRoutes);
-app.use("/dev", devRouter);
 
 // Health check
 app.get("/health", (req, res) => {
