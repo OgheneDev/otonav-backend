@@ -46,9 +46,7 @@ app.use(express.json());
 app.use(cookieParser());
 
 // Docs
-if (process.env.NODE_ENV !== "production") {
-  app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-}
+app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 // Routes
 app.use("/api/auth", authRoutes);
