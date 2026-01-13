@@ -1,27 +1,14 @@
-import nodemailer from "nodemailer";
+import sgMail from "@sendgrid/mail";
 
-const SMTP_HOST = process.env.SMTP_HOST;
-const SMTP_PORT = parseInt(process.env.SMTP_PORT || "587");
-const SMTP_USER = process.env.SMTP_USER;
-const SMTP_PASS = process.env.SMTP_PASS;
+const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
 const EMAIL_FROM = process.env.EMAIL_FROM || "emmanueloghene72@gmail.com";
 
-const transporter = nodemailer.createTransport({
-  host: SMTP_HOST,
-  port: SMTP_PORT,
-  secure: SMTP_PORT === 465,
-  auth:
-    SMTP_USER && SMTP_PASS
-      ? {
-          user: SMTP_USER,
-          pass: SMTP_PASS,
-        }
-      : undefined,
-  // Add timeouts to prevent hanging
-  connectionTimeout: 10000, // 10 seconds to establish connection
-  greetingTimeout: 10000, // 10 seconds to receive greeting from server
-  socketTimeout: 30000, // 30 seconds of socket inactivity before timeout
-});
+// Initialize SendGrid
+if (SENDGRID_API_KEY) {
+  sgMail.setApiKey(SENDGRID_API_KEY);
+} else {
+  console.warn("⚠️  SENDGRID_API_KEY not configured - emails will not be sent");
+}
 
 export interface EmailOptions {
   to: string;
@@ -31,8 +18,8 @@ export interface EmailOptions {
 }
 
 export const sendEmail = async (options: EmailOptions): Promise<void> => {
-  if (!SMTP_HOST) {
-    console.warn("SMTP not configured, email not sent:", {
+  if (!SENDGRID_API_KEY) {
+    console.warn("📧 SendGrid not configured, email not sent:", {
       to: options.to,
       subject: options.subject,
     });
@@ -43,9 +30,9 @@ export const sendEmail = async (options: EmailOptions): Promise<void> => {
     console.log(`📧 Attempting to send email to ${options.to}...`);
     const startTime = Date.now();
 
-    await transporter.sendMail({
-      from: EMAIL_FROM,
+    await sgMail.send({
       to: options.to,
+      from: EMAIL_FROM, // Must be verified in SendGrid
       subject: options.subject,
       html: options.html,
       text: options.text || options.html.replace(/<[^>]*>/g, ""),
@@ -53,14 +40,17 @@ export const sendEmail = async (options: EmailOptions): Promise<void> => {
 
     const duration = Date.now() - startTime;
     console.log(`✅ Email sent successfully to ${options.to} in ${duration}ms`);
-  } catch (error) {
+  } catch (error: any) {
     console.error("❌ Failed to send email:", error);
-    console.error("SMTP Config:", {
-      host: SMTP_HOST,
-      port: SMTP_PORT,
-      user: SMTP_USER,
-      hasPassword: !!SMTP_PASS,
-    });
-    throw new Error("Failed to send invitation email");
+    
+    // SendGrid-specific error details
+    if (error.response) {
+      console.error("SendGrid Error Details:", {
+        statusCode: error.response.statusCode,
+        body: error.response.body,
+      });
+    }
+
+    throw new Error("Failed to send email");
   }
 };
