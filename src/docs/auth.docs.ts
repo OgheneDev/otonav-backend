@@ -2,7 +2,7 @@
  * @swagger
  * tags:
  *   name: Auth
- *   description: Authentication & user management
+ *   description: Authentication & user management with multi-organization support
  *
  * @swagger
  * components:
@@ -12,6 +12,7 @@
  *       scheme: bearer
  *       bearerFormat: JWT
  *   schemas:
+ *     # Basic Auth Schemas
  *     RegisterBusiness:
  *       type: object
  *       required:
@@ -39,6 +40,7 @@
  *         phoneNumber:
  *           type: string
  *           example: "+1234567890"
+ *
  *     RegisterCustomer:
  *       type: object
  *       required:
@@ -62,6 +64,8 @@
  *         phoneNumber:
  *           type: string
  *           example: "+1234567890"
+ *
+ *     # Login & Token Schemas
  *     Login:
  *       type: object
  *       required:
@@ -76,28 +80,8 @@
  *           type: string
  *           format: password
  *           example: password123
- *     VerifyEmail:
- *       type: object
- *       required:
- *         - email
- *         - otp
- *       properties:
- *         email:
- *           type: string
- *           format: email
- *           example: user@example.com
- *         otp:
- *           type: string
- *           example: 123456
- *     ResendOTP:
- *       type: object
- *       required:
- *         - email
- *       properties:
- *         email:
- *           type: string
- *           format: email
- *           example: user@example.com
+ *
+ *     # Organization-based Schemas
  *     CreateRider:
  *       type: object
  *       required:
@@ -111,34 +95,7 @@
  *         riderName:
  *           type: string
  *           example: Mike Johnson
- *     CompleteRiderRegistrationViaToken:
- *       type: object
- *       required:
- *         - token
- *         - password
- *         - phoneNumber
- *       properties:
- *         token:
- *           type: string
- *           description: Registration token from email
- *           example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
- *         password:
- *           type: string
- *           format: password
- *           minLength: 6
- *           example: newpassword123
- *         phoneNumber:
- *           type: string
- *           example: "+1234567890"
- *     AcceptInvitation:
- *       type: object
- *       required:
- *         - token
- *       properties:
- *         token:
- *           type: string
- *           description: Invitation token from email
- *           example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+ *
  *     CreateCustomer:
  *       type: object
  *       required:
@@ -152,6 +109,28 @@
  *           type: string
  *           example: Sarah Wilson
  *           nullable: true
+ *
+ *     # Token-based Registration Schemas
+ *     CompleteRiderRegistrationViaToken:
+ *       type: object
+ *       required:
+ *         - token
+ *         - password
+ *         - phoneNumber
+ *       properties:
+ *         token:
+ *           type: string
+ *           description: Registration token from email (includes orgId)
+ *           example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+ *         password:
+ *           type: string
+ *           format: password
+ *           minLength: 6
+ *           example: newpassword123
+ *         phoneNumber:
+ *           type: string
+ *           example: "+1234567890"
+ *
  *     CompleteCustomerRegistrationViaToken:
  *       type: object
  *       required:
@@ -160,7 +139,7 @@
  *       properties:
  *         token:
  *           type: string
- *           description: Registration token from email
+ *           description: Registration token from email (NO orgId for customers)
  *           example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
  *         password:
  *           type: string
@@ -171,6 +150,42 @@
  *           type: string
  *           example: Sarah Wilson
  *           nullable: true
+ *
+ *     AcceptInvitation:
+ *       type: object
+ *       required:
+ *         - token
+ *       properties:
+ *         token:
+ *           type: string
+ *           description: Invitation token for existing riders to join new organizations
+ *           example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+ *
+ *     # Other Auth Schemas
+ *     VerifyEmail:
+ *       type: object
+ *       required:
+ *         - email
+ *         - otp
+ *       properties:
+ *         email:
+ *           type: string
+ *           format: email
+ *           example: user@example.com
+ *         otp:
+ *           type: string
+ *           example: 123456
+ *
+ *     ResendOTP:
+ *       type: object
+ *       required:
+ *         - email
+ *       properties:
+ *         email:
+ *           type: string
+ *           format: email
+ *           example: user@example.com
+ *
  *     UpdateProfile:
  *       type: object
  *       properties:
@@ -186,6 +201,7 @@
  *           type: string
  *           example: "+1234567890"
  *           nullable: true
+ *
  *     ChangePassword:
  *       type: object
  *       required:
@@ -201,6 +217,7 @@
  *           format: password
  *           minLength: 6
  *           example: newpassword456
+ *
  *     ForgotPassword:
  *       type: object
  *       required:
@@ -210,6 +227,7 @@
  *           type: string
  *           format: email
  *           example: user@example.com
+ *
  *     ResetPassword:
  *       type: object
  *       required:
@@ -229,12 +247,15 @@
  *           format: password
  *           minLength: 6
  *           example: newsecurepassword
+ *
  *     RefreshToken:
  *       type: object
  *       properties:
  *         refreshToken:
  *           type: string
  *           description: Refresh token (can also be sent as cookie)
+ *
+ *     # Response Schemas
  *     UserProfile:
  *       type: object
  *       properties:
@@ -249,10 +270,6 @@
  *         role:
  *           type: string
  *           enum: [owner, rider, customer]
- *         orgId:
- *           type: string
- *           format: uuid
- *           nullable: true
  *         emailVerified:
  *           type: boolean
  *         registrationCompleted:
@@ -267,6 +284,22 @@
  *           type: string
  *           format: date-time
  *           nullable: true
+ *
+ *     OrganizationMembership:
+ *       type: object
+ *       properties:
+ *         orgId:
+ *           type: string
+ *           format: uuid
+ *         role:
+ *           type: string
+ *           enum: [owner, rider]
+ *         isActive:
+ *           type: boolean
+ *         joinedAt:
+ *           type: string
+ *           format: date-time
+ *
  *     LoginResponse:
  *       type: object
  *       properties:
@@ -280,14 +313,117 @@
  *           type: object
  *           properties:
  *             user:
- *               $ref: '#/components/schemas/UserProfile'
+ *               type: object
+ *               properties:
+ *                 id:
+ *                   type: string
+ *                   format: uuid
+ *                 email:
+ *                   type: string
+ *                   format: email
+ *                 name:
+ *                   type: string
+ *                 role:
+ *                   type: string
+ *                   example: owner
+ *                 emailVerified:
+ *                   type: boolean
+ *                 registrationCompleted:
+ *                   type: boolean
+ *                 phoneNumber:
+ *                   type: string
+ *                   nullable: true
+ *                 organizations:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/OrganizationMembership'
+ *                 defaultOrgId:
+ *                   type: string
+ *                   format: uuid
+ *                   nullable: true
+ *                   description: Present only if user has exactly one organization
+ *                 defaultOrgRole:
+ *                   type: string
+ *                   nullable: true
+ *                   description: Role in the default organization
  *             accessToken:
  *               type: string
- *               description: JWT access token
+ *               description: JWT access token with organizations array
  *             expiresIn:
  *               type: integer
  *               description: Access token expiry in seconds
  *               example: 604800
+ *
+ *     BusinessRegistrationResponse:
+ *       type: object
+ *       properties:
+ *         success:
+ *           type: boolean
+ *           example: true
+ *         message:
+ *           type: string
+ *           example: Business registration successful
+ *         data:
+ *           type: object
+ *           properties:
+ *             user:
+ *               type: object
+ *               properties:
+ *                 id:
+ *                   type: string
+ *                   format: uuid
+ *                 email:
+ *                   type: string
+ *                   format: email
+ *                 name:
+ *                   type: string
+ *                 role:
+ *                   type: string
+ *                   example: owner
+ *                 emailVerified:
+ *                   type: boolean
+ *                 otp:
+ *                   type: string
+ *                   description: OTP for email verification (testing only)
+ *             organization:
+ *               type: object
+ *               properties:
+ *                 id:
+ *                   type: string
+ *                   format: uuid
+ *                 name:
+ *                   type: string
+ *
+ *     RiderCreationResponse:
+ *       type: object
+ *       properties:
+ *         success:
+ *           type: boolean
+ *           example: true
+ *         message:
+ *           type: string
+ *           example: Rider invitation sent successfully
+ *         data:
+ *           type: object
+ *           properties:
+ *             email:
+ *               type: string
+ *               format: email
+ *             name:
+ *               type: string
+ *             emailSent:
+ *               type: boolean
+ *               example: true
+ *             emailType:
+ *               type: string
+ *               enum: [registration, invitation]
+ *               description: |
+ *                 registration: New rider needs to complete registration
+ *                 invitation: Existing rider invited to join organization
+ *             token:
+ *               type: string
+ *               description: Registration/invitation token (for testing)
+ *
  *     ErrorResponse:
  *       type: object
  *       properties:
@@ -297,6 +433,7 @@
  *         message:
  *           type: string
  *           example: Error description
+ *
  *   responses:
  *     UnauthorizedError:
  *       description: Authentication token is missing or invalid
@@ -310,6 +447,33 @@
  *         application/json:
  *           schema:
  *             $ref: '#/components/schemas/ErrorResponse'
+ *     NoOrgContextError:
+ *       description: User token does not have organization context
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/ErrorResponse'
+ *           example:
+ *             success: false
+ *             message: "Organization context is required"
+ *     NotOrgMemberError:
+ *       description: User is not a member of the current organization
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/ErrorResponse'
+ *           example:
+ *             success: false
+ *             message: "You are not a member of this organization"
+ *     NotOrgOwnerError:
+ *       description: User is not an owner of the current organization
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/ErrorResponse'
+ *           example:
+ *             success: false
+ *             message: "Only organization owners can perform this action"
  */
 
 /**
@@ -318,7 +482,12 @@
  *   post:
  *     summary: Register a business owner
  *     tags: [Auth]
- *     description: Public endpoint - No authentication required
+ *     description: |
+ *       Creates a business owner account and their first organization.
+ *       - User is created with global role "owner"
+ *       - Organization is created with the provided business name
+ *       - User is added to user_organizations as owner of the new org
+ *       - JWT token will include organizations array
  *     security: []
  *     requestBody:
  *       required: true
@@ -332,46 +501,7 @@
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: Business registration successful. Please check your email for OTP to verify your account.
- *                 data:
- *                   type: object
- *                   properties:
- *                     user:
- *                       type: object
- *                       properties:
- *                         id:
- *                           type: string
- *                           format: uuid
- *                         email:
- *                           type: string
- *                           format: email
- *                         name:
- *                           type: string
- *                         role:
- *                           type: string
- *                         orgId:
- *                           type: string
- *                           format: uuid
- *                         emailVerified:
- *                           type: boolean
- *                         otp:
- *                           type: string
- *                           description: OTP for email verification (only for testing)
- *                     organization:
- *                       type: object
- *                       properties:
- *                         id:
- *                           type: string
- *                           format: uuid
- *                         name:
- *                           type: string
+ *               $ref: '#/components/schemas/BusinessRegistrationResponse'
  *       400:
  *         description: Bad request
  *         content:
@@ -386,7 +516,11 @@
  *   post:
  *     summary: Register a customer (Public registration)
  *     tags: [Auth]
- *     description: Public endpoint - No authentication required
+ *     description: |
+ *       Public customer registration. Customers:
+ *       - Have global role "customer"
+ *       - Do NOT belong to any organization (no entry in user_organizations)
+ *       - Are independent users who can order from multiple businesses
  *     security: []
  *     requestBody:
  *       required: true
@@ -441,7 +575,13 @@
  *   post:
  *     summary: Login user
  *     tags: [Auth]
- *     description: Public endpoint - No authentication required
+ *     description: |
+ *       Authenticates user and returns JWT token with organizations array.
+ *       Token includes:
+ *       - userId, email, role (global role)
+ *       - orgId (if user has exactly one organization)
+ *       - organizations array (list of all org memberships)
+ *       Response includes user's organizations for UI to show organization switcher
  *     security: []
  *     requestBody:
  *       required: true
@@ -547,7 +687,9 @@
  *   post:
  *     summary: Refresh access token
  *     tags: [Auth]
- *     description: Public endpoint - Requires refresh token (sent via body or cookie)
+ *     description: |
+ *       Refreshes access token using refresh token.
+ *       New token will include updated organizations array.
  *     security: []
  *     requestBody:
  *       content:
@@ -701,7 +843,9 @@
  *   get:
  *     summary: Get current user profile
  *     tags: [Auth]
- *     description: Protected endpoint - Requires valid JWT token
+ *     description: |
+ *       Protected endpoint - Returns user profile WITHOUT organizations.
+ *       Use separate organization endpoints to get user's organizations.
  *     security:
  *       - bearerAuth: []
  *     responses:
@@ -752,7 +896,6 @@
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: Profile updated successfully
  *                 data:
  *                   type: object
  *                   properties:
@@ -838,11 +981,27 @@
  *     summary: Create a rider account (Owner only)
  *     tags: [Auth]
  *     description: |
- *       Protected endpoint - Requires owner role with valid JWT token.
- *       Creates a rider account with registration/invitation flow.
- *       - If rider email doesn't exist: Sends registration link
- *       - If rider exists in another org: Sends invitation to join
- *       - If rider exists in same org: Updates and sends registration link
+ *       **REQUIRES ORGANIZATION CONTEXT**
+ *
+ *       Creates a rider account for the current organization.
+ *       Two possible flows:
+ *
+ *       1. **New Rider (registration)**:
+ *          - Rider doesn't exist in system
+ *          - Creates account with temporary password
+ *          - Sends registration link with orgId in token
+ *          - On completion, adds rider to user_organizations
+ *
+ *       2. **Existing Rider (invitation)**:
+ *          - Rider exists but not in this organization
+ *          - Sends invitation to join organization
+ *          - On acceptance, adds rider to user_organizations
+ *
+ *       **Middleware Chain:**
+ *       1. authenticateToken - Valid JWT
+ *       2. requireOrgContext - Token has orgId
+ *       3. requireOrgMember - User belongs to this org
+ *       4. requireOrgOwner - User is owner in this org
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -857,31 +1016,7 @@
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: Rider invitation sent successfully
- *                 data:
- *                   type: object
- *                   properties:
- *                     email:
- *                       type: string
- *                       format: email
- *                     name:
- *                       type: string
- *                     emailSent:
- *                       type: boolean
- *                       example: true
- *                     emailType:
- *                       type: string
- *                       enum: [registration, invitation]
- *                     token:
- *                       type: string
- *                       description: Registration/invitation token (for testing)
+ *               $ref: '#/components/schemas/RiderCreationResponse'
  *       400:
  *         description: Bad request
  *         content:
@@ -891,7 +1026,16 @@
  *       401:
  *         $ref: '#/components/responses/UnauthorizedError'
  *       403:
- *         $ref: '#/components/responses/ForbiddenError'
+ *         description: |
+ *           Forbidden - User doesn't have required permissions.
+ *           Possible reasons:
+ *           - User token doesn't have orgId (NoOrgContextError)
+ *           - User is not a member of the organization (NotOrgMemberError)
+ *           - User is not an owner of the organization (NotOrgOwnerError)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 
 /**
@@ -901,9 +1045,18 @@
  *     summary: Complete rider registration via token (Public)
  *     tags: [Auth]
  *     description: |
- *       Public endpoint - No authentication required.
- *       Complete rider registration using token from email.
- *       Sets password, phone number, and sends OTP for email verification.
+ *       **PUBLIC ENDPOINT** - No authentication required
+ *
+ *       Completes rider registration using token from email.
+ *       Token includes orgId, so rider is automatically added to the organization.
+ *
+ *       Steps:
+ *       1. Validates registration token (includes email, orgId, role=rider)
+ *       2. Sets password and phone number
+ *       3. Adds user to user_organizations for the specified orgId
+ *       4. Sends OTP for email verification
+ *
+ *       Note: Rider's global role becomes "rider"
  *     security: []
  *     requestBody:
  *       required: true
@@ -939,9 +1092,6 @@
  *                     role:
  *                       type: string
  *                       example: rider
- *                     orgId:
- *                       type: string
- *                       format: uuid
  *                     emailVerified:
  *                       type: boolean
  *                     registrationCompleted:
@@ -964,8 +1114,17 @@
  *     summary: Accept invitation to join organization (Public)
  *     tags: [Auth]
  *     description: |
- *       Public endpoint - No authentication required.
- *       Accept invitation from existing rider to join a new organization.
+ *       **PUBLIC ENDPOINT** - No authentication required
+ *
+ *       Allows existing riders to join new organizations via invitation.
+ *       Token includes orgId, email, and role=rider.
+ *
+ *       Steps:
+ *       1. Validates invitation token
+ *       2. Adds user to user_organizations for the new organization
+ *       3. User can now work with multiple organizations
+ *
+ *       Note: User's global role remains "rider"
  *     security: []
  *     requestBody:
  *       required: true
@@ -1001,9 +1160,6 @@
  *                     role:
  *                       type: string
  *                       example: rider
- *                     orgId:
- *                       type: string
- *                       format: uuid
  *       400:
  *         description: Bad request
  *         content:
@@ -1019,9 +1175,22 @@
  *     summary: Create a customer account (Owner only)
  *     tags: [Auth]
  *     description: |
- *       Protected endpoint - Requires owner role with valid JWT token.
- *       Creates a customer account for the business.
- *       Sends registration link to customer's email.
+ *       **REQUIRES ORGANIZATION CONTEXT**
+ *
+ *       Business owners can create customer accounts for their business.
+ *       Customers are NOT added to user_organizations - they remain independent.
+ *
+ *       Flow:
+ *       1. Creates customer account with temporary password
+ *       2. Sends registration link WITHOUT orgId in token
+ *       3. Customer completes registration independently
+ *       4. Customer can order from any business later
+ *
+ *       **Middleware Chain:**
+ *       1. authenticateToken - Valid JWT
+ *       2. requireOrgContext - Token has orgId
+ *       3. requireOrgMember - User belongs to this org
+ *       4. requireOrgOwner - User is owner in this org
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -1067,7 +1236,16 @@
  *       401:
  *         $ref: '#/components/responses/UnauthorizedError'
  *       403:
- *         $ref: '#/components/responses/ForbiddenError'
+ *         description: |
+ *           Forbidden - User doesn't have required permissions.
+ *           Possible reasons:
+ *           - User token doesn't have orgId (NoOrgContextError)
+ *           - User is not a member of the organization (NotOrgMemberError)
+ *           - User is not an owner of the organization (NotOrgOwnerError)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 
 /**
@@ -1077,9 +1255,18 @@
  *     summary: Complete customer registration via token (Public)
  *     tags: [Auth]
  *     description: |
- *       Public endpoint - No authentication required.
- *       Complete customer registration using token from email.
- *       Sets password, name (optional), and sends OTP for email verification.
+ *       **PUBLIC ENDPOINT** - No authentication required
+ *
+ *       Completes customer registration using token from email.
+ *       Token does NOT include orgId - customers are independent users.
+ *
+ *       Steps:
+ *       1. Validates registration token (includes email, role=customer, NO orgId)
+ *       2. Sets password and optional name
+ *       3. Sends OTP for email verification
+ *       4. Returns access token for immediate login
+ *
+ *       Note: Customer's global role is "customer"
  *     security: []
  *     requestBody:
  *       required: true

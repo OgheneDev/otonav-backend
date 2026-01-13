@@ -9,7 +9,6 @@ import {
   jsonb,
   varchar,
 } from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
 
 // Enums
 export const userRoleEnum = pgEnum("user_role", [
@@ -38,21 +37,48 @@ export const organizations = pgTable("organizations", {
     .$onUpdate(() => new Date()),
 });
 
-// 2. Users
+export const userOrganizations = pgTable("user_organizations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .references(() => users.id, { onDelete: "cascade" })
+    .notNull(),
+  orgId: uuid("org_id")
+    .references(() => organizations.id, { onDelete: "cascade" })
+    .notNull(),
+
+  // User's role within this specific organization
+  role: userRoleEnum("role").notNull(),
+
+  // Status within this organization
+  isActive: boolean("is_active").default(true).notNull(),
+  isSuspended: boolean("is_suspended").default(false).notNull(),
+  suspensionReason: text("suspension_reason"),
+  suspensionExpires: timestamp("suspension_expires"),
+
+  // Timestamps
+  joinedAt: timestamp("joined_at").defaultNow().notNull(),
+  lastActiveAt: timestamp("last_active_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: text("email").notNull().unique(),
   password: text("password").notNull(),
   name: text("name"),
-  role: userRoleEnum("role").notNull(),
-  orgId: uuid("org_id").references(() => organizations.id), // Context for Owners/Riders
 
-  // Security & Auth State
+  // Global user type (default role)
+  role: userRoleEnum("role").default("customer").notNull(),
+
+  // Security & Auth State (unchanged)
   emailVerified: boolean("email_verified").default(false).notNull(),
   verificationToken: text("verification_token"),
-  tokenVersion: integer("token_version").default(1).notNull(), // For global logout/revocation
+  tokenVersion: integer("token_version").default(1).notNull(),
 
-  // Password Reset
+  // Password Reset (unchanged)
   resetPasswordToken: text("reset_password_token"),
   resetPasswordExpires: timestamp("reset_password_expires"),
   lastPasswordChange: timestamp("last_password_change"),
@@ -65,11 +91,10 @@ export const users = pgTable("users", {
   registrationTokenExpires: timestamp("registration_token_expires"),
   invitationToken: text("invitation_token"),
   invitationTokenExpires: timestamp("invitation_token_expires"),
-  invitedByOrgId: uuid("invited_by_org_id").references(() => organizations.id),
   phoneNumber: text("phone_number"),
   registrationCompleted: boolean("registration_completed").default(false),
 
-  // Metadata
+  // Metadata (unchanged)
   lastLoginAt: timestamp("last_login_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });

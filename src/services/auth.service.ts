@@ -2,7 +2,12 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import type { SignOptions } from "jsonwebtoken";
 import { db } from "../config/database.js";
-import { users, organizations, auditLogs } from "../models/schema.js";
+import {
+  users,
+  organizations,
+  auditLogs,
+  userOrganizations,
+} from "../models/schema.js";
 import { eq, and, sql } from "drizzle-orm";
 import { sendEmail } from "./email.service.js";
 import { generateOTP, getOTPExpiration, verifyOTP } from "./otp.service.js";
@@ -19,6 +24,10 @@ export interface TokenPayload {
   orgId?: string | null;
   role?: string;
   type?: "access" | "refresh";
+  organizations?: Array<{
+    orgId: string;
+    role: string;
+  }>;
 }
 
 export interface RefreshTokenPayload {
@@ -70,9 +79,27 @@ export const verifyToken = <T = TokenPayload>(token: string): T => {
 // --- Token Generation for Registration/Invitation ---
 const generateRegistrationToken = (
   email: string,
-  orgId: string,
+  orgId: string = "", // Make orgId optional with a default value
   role: string
 ): string => {
+  if (role === "customer") {
+    // Customers don't belong to specific orgs, so don't include orgId
+    return jwt.sign(
+      {
+        email,
+        role,
+        type: "registration",
+      },
+      JWT_SECRET,
+      { expiresIn: "24h" }
+    );
+  }
+
+  // Riders need orgId
+  if (!orgId) {
+    throw new Error("orgId is required for rider registration tokens");
+  }
+
   return jwt.sign(
     {
       email,
@@ -475,12 +502,21 @@ export const registerBusiness = async (
           password: passwordHash,
           name,
           phoneNumber: phoneNumber,
-          role: "owner",
-          orgId: org.id,
+          role: "owner", // Global role
+          // Remove orgId from users table insertion
           emailVerified: false,
           tokenVersion: 1,
         })
         .returning();
+
+      // Add user to user_organizations as owner
+      await tx.insert(userOrganizations).values({
+        userId: user.id,
+        orgId: org.id,
+        role: "owner",
+        isActive: true,
+        isSuspended: false,
+      });
 
       await tx
         .update(organizations)
@@ -506,11 +542,10 @@ export const registerBusiness = async (
     })
     .then(async (result) => {
       await sendVerificationOTPEmail(email, result.otp, name || "");
-      // Return OTP in response for testing
       return {
         user: result.user,
         org: result.org,
-        otp: result.otp, // Added for testing
+        otp: result.otp,
       };
     });
 };
@@ -539,7 +574,6 @@ export const registerCustomer = async (
       name,
       phoneNumber: phoneNumber,
       role: "customer",
-      orgId: null,
       emailVerified: false,
       tokenVersion: 1,
     })
@@ -549,7 +583,6 @@ export const registerCustomer = async (
   await storeOTP(customer.id, otp, "verify");
   await sendVerificationOTPEmail(email, otp, name || "");
 
-  // Return OTP in response for testing
   return {
     ...customer,
     otp: otp,
@@ -557,15 +590,32 @@ export const registerCustomer = async (
 };
 
 /**
- * Verify Email with OTP
+ * Verify Email with OTP - FIXED VERSION
  */
 export const verifyEmailWithOTP = async (
   email: string,
   otp: string
 ): Promise<boolean> => {
+  // Normalize email: trim whitespace and convert to lowercase
+  const normalizedEmail = email.trim().toLowerCase();
+
+  console.log("=== Debug: Email Verification ===");
+  console.log("Original email:", email);
+  console.log("Normalized email:", normalizedEmail);
+  console.log("OTP received:", otp);
+
   const user = await db.query.users.findFirst({
-    where: eq(users.email, email),
+    where: sql`LOWER(TRIM(${users.email})) = ${normalizedEmail}`,
   });
+
+  console.log("User found:", user ? "Yes" : "No");
+  if (user) {
+    console.log("User ID:", user.id);
+    console.log("Stored OTP:", user.otpCode);
+    console.log("OTP Type:", user.otpType);
+    console.log("OTP Expires:", user.otpExpires);
+    console.log("Email Verified:", user.emailVerified);
+  }
 
   if (!user) {
     throw new Error("User not found");
@@ -611,11 +661,28 @@ export const authenticateUser = async (email: string, password: string) => {
     const otp = generateOTP();
     await storeOTP(user.id, otp, "verify");
     await sendVerificationOTPEmail(email, otp, user.name || "");
-    // Return OTP in response for testing when email is not verified
     throw new Error(
       `Please verify your email. A new OTP has been sent. OTP for testing: ${otp}`
     );
   }
+
+  // Get user's organizations
+  const userOrgs = await db
+    .select({
+      orgId: userOrganizations.orgId,
+      role: userOrganizations.role,
+    })
+    .from(userOrganizations)
+    .where(
+      and(
+        eq(userOrganizations.userId, user.id),
+        eq(userOrganizations.isActive, true)
+      )
+    );
+
+  // If user has only one organization, use it as default
+  const defaultOrgId = userOrgs.length === 1 ? userOrgs[0].orgId : null;
+  const defaultRole = userOrgs.length === 1 ? userOrgs[0].role : user.role;
 
   await db
     .update(users)
@@ -625,8 +692,9 @@ export const authenticateUser = async (email: string, password: string) => {
   const accessToken = generateAccessToken({
     userId: user.id,
     email: user.email,
-    orgId: user.orgId,
-    role: user.role,
+    orgId: defaultOrgId, // Can be null for users with multiple/no organizations
+    role: defaultRole,
+    organizations: userOrgs, // Include all organizations in token
   });
 
   const refreshToken = generateRefreshToken({
@@ -635,7 +703,10 @@ export const authenticateUser = async (email: string, password: string) => {
   });
 
   return {
-    user,
+    user: {
+      ...user,
+      organizations: userOrgs,
+    },
     accessToken,
     refreshToken,
   };
@@ -652,7 +723,6 @@ export const getUserById = async (userId: string) => {
       email: true,
       name: true,
       role: true,
-      orgId: true,
       emailVerified: true,
       createdAt: true,
       lastLoginAt: true,
@@ -678,10 +748,19 @@ export const createRiderAccount = async (
   riderName: string
 ) => {
   const owner = await db.query.users.findFirst({
-    where: and(eq(users.id, ownerId), eq(users.orgId, orgId)),
+    where: eq(users.id, ownerId),
   });
 
-  if (!owner || owner.role !== "owner") {
+  // Check if owner belongs to the organization
+  const ownerMembership = await db.query.userOrganizations.findFirst({
+    where: and(
+      eq(userOrganizations.userId, ownerId),
+      eq(userOrganizations.orgId, orgId),
+      eq(userOrganizations.role, "owner")
+    ),
+  });
+
+  if (!owner || !ownerMembership) {
     throw new Error("Unauthorized: Only owners can create rider accounts");
   }
 
@@ -705,64 +784,46 @@ export const createRiderAccount = async (
     let invitationLink = "";
 
     if (existingUser) {
-      if (existingUser.orgId && existingUser.orgId !== orgId) {
-        // Send invitation to join new organization
-        token = generateInvitationToken(riderEmail, orgId, "rider");
-        invitationLink = getInvitationLink(token);
-        emailType = "invitation";
+      // Check if rider already belongs to this organization
+      const existingMembership = await tx.query.userOrganizations.findFirst({
+        where: and(
+          eq(userOrganizations.userId, existingUser.id),
+          eq(userOrganizations.orgId, orgId)
+        ),
+      });
 
-        await sendRiderInvitationEmail(
-          riderEmail,
-          invitationLink,
-          org.name,
-          riderName
-        );
-
-        await tx
-          .update(users)
-          .set({
-            invitationToken: token,
-            invitationTokenExpires: new Date(
-              Date.now() + 7 * 24 * 60 * 60 * 1000
-            ),
-            invitedByOrgId: orgId,
-          })
-          .where(eq(users.id, existingUser.id));
-      } else {
-        // User exists in same org or no org
-        token = generateRegistrationToken(riderEmail, orgId, "rider");
-        registrationLink = getRegistrationLink(token, "rider");
-        emailType = "registration";
-
-        await sendRiderRegistrationLinkEmail(
-          riderEmail,
-          registrationLink,
-          org.name,
-          riderName
-        );
-
-        [rider] = await tx
-          .update(users)
-          .set({
-            name: riderName,
-            role: "rider",
-            orgId: orgId,
-            registrationToken: token,
-            registrationTokenExpires: new Date(
-              Date.now() + 24 * 60 * 60 * 1000
-            ),
-            registrationCompleted: false,
-          })
-          .where(eq(users.id, existingUser.id))
-          .returning();
+      if (existingMembership) {
+        throw new Error("Rider already belongs to this organization");
       }
+
+      // Send invitation to join new organization
+      token = generateInvitationToken(riderEmail, orgId, "rider");
+      invitationLink = getInvitationLink(token);
+      emailType = "invitation";
+
+      await sendRiderInvitationEmail(
+        riderEmail,
+        invitationLink,
+        org.name,
+        riderName
+      );
+
+      await tx
+        .update(users)
+        .set({
+          invitationToken: token,
+          invitationTokenExpires: new Date(
+            Date.now() + 7 * 24 * 60 * 60 * 1000
+          ),
+        })
+        .where(eq(users.id, existingUser.id));
     } else {
       // New user - send registration link
       token = generateRegistrationToken(riderEmail, orgId, "rider");
       registrationLink = getRegistrationLink(token, "rider");
       emailType = "registration";
 
-      // Generate a temporary password (will be changed during registration)
+      // Generate a temporary password
       const tempPassword = `temp_${Math.random().toString(36).slice(2, 12)}`;
       const tempPasswordHash = await hashPassword(tempPassword);
 
@@ -772,8 +833,7 @@ export const createRiderAccount = async (
           email: riderEmail,
           password: tempPasswordHash,
           name: riderName,
-          role: "rider",
-          orgId: orgId,
+          role: "rider", // Global role
           emailVerified: false,
           registrationCompleted: false,
           registrationToken: token,
@@ -805,20 +865,18 @@ export const createRiderAccount = async (
       timestamp: new Date(),
     });
 
-    // Return token/link in response for testing
     return {
       id: rider?.id || existingUser?.id,
       email: riderEmail,
       name: riderName,
       emailSent: true,
       emailType,
-      token: token, // Added for testing
-      registrationLink: registrationLink || null, // Added for testing
-      invitationLink: invitationLink || null, // Added for testing
+      token: token,
+      registrationLink: registrationLink || null,
+      invitationLink: invitationLink || null,
     };
   });
 };
-
 /**
  * Complete Rider Registration via Token (Public)
  */
@@ -889,80 +947,13 @@ export const completeRiderRegistrationViaToken = async (
 
   const { email, orgId } = payload;
 
-  // Try multiple query approaches to find the user
-  let user = null;
-
-  // First try: Find by registration token (try both cleaned and original)
-  user = await db.query.users.findFirst({
-    where: eq(users.registrationToken, cleanToken),
+  // Find user
+  const user = await db.query.users.findFirst({
+    where: eq(users.email, email),
   });
-
-  console.log("User found by cleanToken:", user?.email || "Not found");
-
-  // Second try: If not found, try with original token
-  if (!user && token !== cleanToken) {
-    user = await db.query.users.findFirst({
-      where: eq(users.registrationToken, token),
-    });
-    console.log("User found by original token:", user?.email || "Not found");
-  }
-
-  // Third try: If not found by token, try by email
-  if (!user) {
-    user = await db.query.users.findFirst({
-      where: eq(users.email, email),
-    });
-
-    console.log("User found by email:", user?.email || "Not found");
-
-    if (user) {
-      console.log(
-        "Stored token in DB:",
-        user.registrationToken?.substring(0, 30) + "..."
-      );
-      console.log("Clean token used:", cleanToken.substring(0, 30) + "...");
-
-      // Check if tokens match (try both cleaned and original)
-      if (
-        user.registrationToken !== cleanToken &&
-        user.registrationToken !== token
-      ) {
-        console.log("Token mismatch detected");
-        throw new Error("Token does not match stored token");
-      }
-    }
-  }
 
   if (!user) {
     throw new Error(`No user found with email: ${email}`);
-  }
-
-  // Check if token has expired
-  if (!user.registrationTokenExpires) {
-    throw new Error("Registration token has no expiry date");
-  }
-
-  const now = new Date();
-  const expiryDate = new Date(user.registrationTokenExpires);
-  console.log("Token expiry check:", {
-    now: now.toISOString(),
-    expiry: expiryDate.toISOString(),
-    isExpired: expiryDate < now,
-  });
-
-  if (expiryDate < now) {
-    throw new Error(
-      `Registration token expired on ${expiryDate.toISOString()}`
-    );
-  }
-
-  // Validate orgId matches
-  if (user.orgId !== orgId) {
-    console.log("OrgId mismatch:", {
-      tokenOrgId: orgId,
-      userOrgId: user.orgId,
-    });
-    throw new Error("Token organization mismatch");
   }
 
   const passwordHash = await hashPassword(password);
@@ -984,10 +975,20 @@ export const completeRiderRegistrationViaToken = async (
     .where(eq(users.id, user.id))
     .returning();
 
+  // ADD USER TO USER_ORGANIZATIONS
+  await db.insert(userOrganizations).values({
+    userId: updatedUser.id,
+    orgId: orgId,
+    role: "rider",
+    isActive: true,
+    isSuspended: false,
+    joinedAt: new Date(),
+  });
+
   await sendVerificationOTPEmail(user.email, otp, updatedUser.name || "");
 
   await db.insert(auditLogs).values({
-    orgId: user.orgId,
+    orgId: orgId,
     userId: updatedUser.id,
     action: "rider.registration_completed",
     severity: "info",
@@ -998,18 +999,14 @@ export const completeRiderRegistrationViaToken = async (
     timestamp: new Date(),
   });
 
-  console.log("=== Registration successful ===");
-
-  // Return OTP in response for testing
   return {
     id: updatedUser.id,
     email: updatedUser.email,
     name: updatedUser.name,
     role: updatedUser.role,
-    orgId: updatedUser.orgId,
     emailVerified: updatedUser.emailVerified,
     registrationCompleted: updatedUser.registrationCompleted,
-    otp: otp, // Added for testing
+    otp: otp,
   };
 };
 
@@ -1042,16 +1039,36 @@ export const acceptInvitation = async (token: string) => {
     throw new Error("Invalid invitation token or token expired");
   }
 
+  // Check if user already belongs to this organization
+  const existingMembership = await db.query.userOrganizations.findFirst({
+    where: and(
+      eq(userOrganizations.userId, user.id),
+      eq(userOrganizations.orgId, orgId)
+    ),
+  });
+
+  if (existingMembership) {
+    throw new Error("User already belongs to this organization");
+  }
+
   const [updatedUser] = await db
     .update(users)
     .set({
-      orgId: orgId,
       invitationToken: null,
       invitationTokenExpires: null,
-      invitedByOrgId: null,
     })
     .where(eq(users.id, user.id))
     .returning();
+
+  // ADD USER TO USER_ORGANIZATIONS
+  await db.insert(userOrganizations).values({
+    userId: updatedUser.id,
+    orgId: orgId,
+    role: "rider",
+    isActive: true,
+    isSuspended: false,
+    joinedAt: new Date(),
+  });
 
   const org = await db.query.organizations.findFirst({
     where: eq(organizations.id, orgId),
@@ -1073,7 +1090,6 @@ export const acceptInvitation = async (token: string) => {
     email: updatedUser.email,
     name: updatedUser.name,
     role: updatedUser.role,
-    orgId: updatedUser.orgId,
   };
 };
 
@@ -1086,11 +1102,16 @@ export const createCustomerAccount = async (
   customerEmail: string,
   customerName?: string
 ) => {
-  const owner = await db.query.users.findFirst({
-    where: and(eq(users.id, ownerId), eq(users.orgId, orgId)),
+  // FIX: Check owner membership instead of orgId in users table
+  const ownerMembership = await db.query.userOrganizations.findFirst({
+    where: and(
+      eq(userOrganizations.userId, ownerId),
+      eq(userOrganizations.orgId, orgId),
+      eq(userOrganizations.role, "owner")
+    ),
   });
 
-  if (!owner || owner.role !== "owner") {
+  if (!ownerMembership) {
     throw new Error("Unauthorized: Only owners can create customer accounts");
   }
 
@@ -1106,6 +1127,8 @@ export const createCustomerAccount = async (
     throw new Error("Organization not found");
   }
 
+  // FIX: This logic needs updating - customers don't belong to orgs in user_organizations
+  // They're just regular users with role "customer"
   if (
     existingUser &&
     existingUser.role === "customer" &&
@@ -1116,7 +1139,7 @@ export const createCustomerAccount = async (
 
   return await db.transaction(async (tx) => {
     let customer;
-    const token = generateRegistrationToken(customerEmail, orgId, "customer");
+    const token = generateRegistrationToken(customerEmail, "", "customer");
     const registrationLink = getRegistrationLink(token, "customer");
 
     if (existingUser && !existingUser.emailVerified) {
@@ -1131,7 +1154,6 @@ export const createCustomerAccount = async (
         .where(eq(users.id, existingUser.id))
         .returning();
     } else {
-      // Generate a temporary password (will be changed during registration)
       const tempPassword = `temp_${Math.random().toString(36).slice(2, 12)}`;
       const tempPasswordHash = await hashPassword(tempPassword);
 
@@ -1164,19 +1186,18 @@ export const createCustomerAccount = async (
       details: {
         customerEmail,
         customerName: customerName || "Not provided",
-        createdBy: owner.email,
+        createdBy: ownerMembership.userId,
       },
       timestamp: new Date(),
     });
 
-    // Return token/link in response for testing
     return {
       id: customer.id,
       email: customer.email,
       name: customer.name,
       emailSent: true,
-      token: token, // Added for testing
-      registrationLink: registrationLink, // Added for testing
+      token: token,
+      registrationLink: registrationLink,
     };
   });
 };
@@ -1189,7 +1210,6 @@ export const completeCustomerRegistrationViaToken = async (
   password: string,
   name?: string
 ) => {
-  // First, find the user by the registration token
   const user = await db.query.users.findFirst({
     where: eq(users.registrationToken, token),
   });
@@ -1198,7 +1218,6 @@ export const completeCustomerRegistrationViaToken = async (
     throw new Error("Invalid registration token");
   }
 
-  // Check if token has expired
   if (
     !user.registrationTokenExpires ||
     user.registrationTokenExpires < new Date()
@@ -1206,7 +1225,6 @@ export const completeCustomerRegistrationViaToken = async (
     throw new Error("Registration token has expired");
   }
 
-  // Now verify the JWT token
   let payload;
   try {
     payload = jwt.verify(token, JWT_SECRET) as any;
@@ -1215,12 +1233,10 @@ export const completeCustomerRegistrationViaToken = async (
     throw new Error("Invalid or expired token");
   }
 
-  // Validate token type and role
   if (payload.type !== "registration" || payload.role !== "customer") {
     throw new Error("Invalid token type");
   }
 
-  // Validate email matches
   if (payload.email !== user.email) {
     throw new Error("Token email mismatch");
   }
@@ -1251,7 +1267,14 @@ export const completeCustomerRegistrationViaToken = async (
 
   await sendVerificationOTPEmail(user.email, otp, updatedUser.name || "");
 
-  // Return OTP in response for testing
+  // FIX: Generate token without orgId
+  const accessToken = generateAccessToken({
+    userId: updatedUser.id,
+    email: updatedUser.email,
+    // REMOVED: orgId: updatedUser.orgId, (field no longer exists)
+    role: updatedUser.role,
+  });
+
   return {
     id: updatedUser.id,
     email: updatedUser.email,
@@ -1259,13 +1282,8 @@ export const completeCustomerRegistrationViaToken = async (
     role: updatedUser.role,
     emailVerified: updatedUser.emailVerified,
     registrationCompleted: updatedUser.registrationCompleted,
-    otp: otp, // Added for testing
-    token: generateAccessToken({
-      userId: updatedUser.id,
-      email: updatedUser.email,
-      orgId: updatedUser.orgId,
-      role: updatedUser.role,
-    }),
+    otp: otp,
+    token: accessToken,
   };
 };
 
@@ -1284,11 +1302,29 @@ export const refreshAccessToken = async (refreshToken: string) => {
     throw new Error("Token revoked or user not found");
   }
 
+  // Get user's organizations to include in new token
+  const userOrgs = await db
+    .select({
+      orgId: userOrganizations.orgId,
+      role: userOrganizations.role,
+    })
+    .from(userOrganizations)
+    .where(
+      and(
+        eq(userOrganizations.userId, user.id),
+        eq(userOrganizations.isActive, true)
+      )
+    );
+
+  const defaultOrgId = userOrgs.length === 1 ? userOrgs[0].orgId : null;
+  const defaultRole = userOrgs.length === 1 ? userOrgs[0].role : user.role;
+
   const accessToken = generateAccessToken({
     userId: user.id,
     email: user.email,
-    orgId: user.orgId,
-    role: user.role,
+    orgId: defaultOrgId,
+    role: defaultRole,
+    organizations: userOrgs,
   });
 
   return { accessToken };

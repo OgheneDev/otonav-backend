@@ -8,11 +8,16 @@ export interface AuthRequest extends Request {
     orgId?: string | null;
     role?: string;
     type?: string;
+    organizations?: Array<{
+      orgId: string;
+      role: string;
+    }>;
   };
 }
 
+// middleware/auth.ts - Updates needed
 /**
- * Middleware to verify access token
+ * Middleware to verify access token with multi-organization support
  */
 export const authenticateToken = async (
   req: Request,
@@ -21,7 +26,7 @@ export const authenticateToken = async (
 ) => {
   try {
     const authHeader = req.headers.authorization;
-    const token = authHeader && authHeader.split(" ")[1]; // Bearer <token>
+    const token = authHeader && authHeader.split(" ")[1];
 
     if (!token) {
       return res.status(401).json({
@@ -43,9 +48,10 @@ export const authenticateToken = async (
     (req as AuthRequest).user = {
       userId: decoded.userId,
       email: decoded.email,
-      orgId: decoded.orgId,
-      role: decoded.role,
+      orgId: decoded.orgId, // This could be null for users with multiple orgs
+      role: decoded.role, // This is the role in the current org (or global if no org)
       type: decoded.type,
+      organizations: decoded.organizations || [], // All organizations user belongs to
     };
 
     next();
@@ -59,36 +65,9 @@ export const authenticateToken = async (
 };
 
 /**
- * Middleware to check user role
+ * Middleware to require specific organization context
  */
-export const requireRole = (...allowedRoles: string[]) => {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const user = (req as AuthRequest).user;
-
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: "Authentication required",
-      });
-    }
-
-    if (!user.role || !allowedRoles.includes(user.role)) {
-      return res.status(403).json({
-        success: false,
-        message: `Insufficient permissions. Required roles: ${allowedRoles.join(
-          ", "
-        )}`,
-      });
-    }
-
-    next();
-  };
-};
-
-/**
- * Middleware to check organization membership
- */
-export const requireOrgMember = (
+export const requireOrgContext = (
   req: Request,
   res: Response,
   next: NextFunction
@@ -102,12 +81,51 @@ export const requireOrgMember = (
     });
   }
 
+  // Check if user has an orgId in token (single org context)
   if (!user.orgId) {
-    return res.status(403).json({
+    return res.status(400).json({
       success: false,
-      message: "User is not a member of any organization",
+      message: "Organization context required. Please select an organization.",
+      availableOrganizations: user.organizations || [],
     });
   }
 
   next();
 };
+
+/**
+ * Middleware to check if user belongs to the organization in context
+ */
+export const requireOrgMembership = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const user = (req as AuthRequest).user;
+
+  if (!user || !user.orgId) {
+    return res.status(401).json({
+      success: false,
+      message: "Authentication and organization context required",
+    });
+  }
+
+  // Check if user belongs to the organization in the token
+  const belongsToOrg = user.organizations?.some(
+    (org) => org.orgId === user.orgId
+  );
+
+  if (!belongsToOrg) {
+    return res.status(403).json({
+      success: false,
+      message: "User is not a member of this organization",
+      currentOrgId: user.orgId,
+      userOrganizations: user.organizations || [],
+    });
+  }
+
+  next();
+};
+
+// Update requireOrgMember to use the new logic
+export const requireOrgMember = requireOrgMembership;
