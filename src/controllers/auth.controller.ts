@@ -1,3 +1,4 @@
+// controllers/auth.controller.ts - Fix the orgId references
 import { Request, Response } from "express";
 import {
   registerBusiness,
@@ -75,7 +76,7 @@ export const registerBusinessController = async (
           email: result.user.email,
           name: result.user.name,
           role: result.user.role,
-          orgId: result.user.orgId,
+          // REMOVED: orgId: result.user.orgId, (field no longer exists in users table)
           emailVerified: result.user.emailVerified,
           otp: result.otp,
         },
@@ -101,7 +102,7 @@ export const registerCustomerController = async (
   try {
     const { email, password, name, phoneNumber } = req.body;
 
-    if (!email || !password || !name || phoneNumber) {
+    if (!email || !password || !name || !phoneNumber) {
       return res.status(400).json({
         success: false,
         message: "All fields are required: email, password, name, phoneNumber",
@@ -150,22 +151,32 @@ export const loginController = async (req: Request, res: Response) => {
       maxAge: 30 * 24 * 60 * 60 * 1000,
     });
 
+    // Extract organizations and determine if user has a default org
+    const userOrgs = result.user.organizations || [];
+    const defaultOrgId = userOrgs.length === 1 ? userOrgs[0].orgId : null;
+    const defaultRole =
+      userOrgs.length === 1 ? userOrgs[0].role : result.user.role;
+
     const responseData: any = {
       user: {
         id: result.user.id,
         email: result.user.email,
         name: result.user.name,
-        role: result.user.role,
-        orgId: result.user.orgId,
+        role: result.user.role, // Global role
         emailVerified: result.user.emailVerified,
         registrationCompleted: result.user.registrationCompleted,
         phoneNumber: result.user.phoneNumber,
+        organizations: userOrgs, // Include user's organizations
       },
       accessToken: result.accessToken,
       expiresIn: 7 * 24 * 60 * 60,
     };
 
-    // REMOVED: requiresRegistrationCompletion logic
+    // Include default org info if available
+    if (defaultOrgId) {
+      responseData.user.defaultOrgId = defaultOrgId;
+      responseData.user.defaultOrgRole = defaultRole;
+    }
 
     return successResponse(res, responseData, "Login successful");
   } catch (error) {
@@ -372,7 +383,7 @@ export const createRiderAccountController = async (
     if (!userId || !orgId) {
       return res.status(401).json({
         success: false,
-        message: "Authentication required",
+        message: "Authentication and organization context required",
       });
     }
 
@@ -448,7 +459,7 @@ export const completeRiderRegistrationViaTokenController = async (
         email: rider.email,
         name: rider.name,
         role: rider.role,
-        orgId: rider.orgId,
+        // REMOVED: orgId: rider.orgId, (field no longer exists in response)
         emailVerified: rider.emailVerified,
         registrationCompleted: rider.registrationCompleted,
       },
@@ -485,7 +496,7 @@ export const acceptInvitationController = async (
         email: result.email,
         name: result.name,
         role: result.role,
-        orgId: result.orgId,
+        // REMOVED: orgId: result.orgId, (field no longer exists in response)
       },
       "Invitation accepted successfully. You are now part of the organization."
     );
@@ -509,7 +520,7 @@ export const createCustomerAccountController = async (
     if (!userId || !orgId) {
       return res.status(401).json({
         success: false,
-        message: "Authentication required",
+        message: "Authentication and organization context required",
       });
     }
 
@@ -695,6 +706,46 @@ export const resetPasswordController = async (req: Request, res: Response) => {
         name: updatedUser.name,
       },
       "Password reset successful. You can now login with your new password."
+    );
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+/**
+ * Switch Organization Context
+ */
+export const switchOrganizationController = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const user = (req as any).user;
+    const { orgId } = req.body;
+
+    if (!user || !user.userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    if (!orgId) {
+      return res.status(400).json({
+        success: false,
+        message: "Organization ID is required",
+      });
+    }
+
+    // This would be implemented in a separate organization service
+    // For now, return a placeholder response
+    return successResponse(
+      res,
+      {
+        message: "Organization switching functionality to be implemented",
+        requestedOrgId: orgId,
+      },
+      "Organization switching endpoint"
     );
   } catch (error) {
     return handleError(res, error);
