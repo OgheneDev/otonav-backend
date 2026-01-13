@@ -5,7 +5,10 @@ import {
   authenticateUser,
   verifyEmailWithOTP,
   createRiderAccount,
-  completeRiderRegistration,
+  completeRiderRegistrationViaToken,
+  acceptInvitation,
+  createCustomerAccount,
+  completeCustomerRegistrationViaToken,
   refreshAccessToken,
   logoutUser,
   getUserById,
@@ -46,16 +49,23 @@ export const registerBusinessController = async (
   res: Response
 ) => {
   try {
-    const { email, password, name, businessName } = req.body;
+    const { email, password, name, phoneNumber, businessName } = req.body;
 
-    if (!email || !password || !name || !businessName) {
+    if (!email || !password || !name || !businessName || !phoneNumber) {
       return res.status(400).json({
         success: false,
-        message: "All fields are required: email, password, name, businessName",
+        message:
+          "All fields are required: email, password, name, businessName, phoneNumber",
       });
     }
 
-    const result = await registerBusiness(email, password, name, businessName);
+    const result = await registerBusiness(
+      email,
+      password,
+      name,
+      businessName,
+      phoneNumber
+    );
 
     return successResponse(
       res,
@@ -67,6 +77,7 @@ export const registerBusinessController = async (
           role: result.user.role,
           orgId: result.user.orgId,
           emailVerified: result.user.emailVerified,
+          otp: result.otp,
         },
         organization: {
           id: result.org.id,
@@ -81,23 +92,23 @@ export const registerBusinessController = async (
 };
 
 /**
- * Register a Customer
+ * Register a Customer (Public registration)
  */
 export const registerCustomerController = async (
   req: Request,
   res: Response
 ) => {
   try {
-    const { email, password, name } = req.body;
+    const { email, password, name, phoneNumber } = req.body;
 
-    if (!email || !password || !name) {
+    if (!email || !password || !name || phoneNumber) {
       return res.status(400).json({
         success: false,
-        message: "All fields are required: email, password, name",
+        message: "All fields are required: email, password, name, phoneNumber",
       });
     }
 
-    const customer = await registerCustomer(email, password, name);
+    const customer = await registerCustomer(email, password, name, phoneNumber);
 
     return successResponse(
       res,
@@ -107,6 +118,7 @@ export const registerCustomerController = async (
         name: customer.name,
         role: customer.role,
         emailVerified: customer.emailVerified,
+        otp: customer.otp,
       },
       "Customer registration successful. Please check your email for OTP to verify your account."
     );
@@ -131,12 +143,11 @@ export const loginController = async (req: Request, res: Response) => {
 
     const result = await authenticateUser(email, password);
 
-    // Set refresh token as HTTP-only cookie (30 days = 30 * 24 * 60 * 60 * 1000 ms)
     res.cookie("refreshToken", result.refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days in milliseconds
+      maxAge: 30 * 24 * 60 * 60 * 1000,
     });
 
     const responseData: any = {
@@ -148,28 +159,15 @@ export const loginController = async (req: Request, res: Response) => {
         orgId: result.user.orgId,
         emailVerified: result.user.emailVerified,
         registrationCompleted: result.user.registrationCompleted,
+        phoneNumber: result.user.phoneNumber,
       },
       accessToken: result.accessToken,
-      expiresIn: 7 * 24 * 60 * 60, // 7 days in seconds (604800 seconds)
-      // REMOVED: refreshToken: result.refreshToken, // Don't expose in response body
-      // REMOVED: refreshTokenExpiresIn: 30 * 24 * 60 * 60, // Only include if needed, and use seconds
+      expiresIn: 7 * 24 * 60 * 60,
     };
 
-    // Optional: If you need to inform the client about refresh token expiry, use seconds
-    // responseData.refreshTokenExpiresIn = 30 * 24 * 60 * 60; // 30 days in seconds
+    // REMOVED: requiresRegistrationCompletion logic
 
-    // Add registration completion flag
-    if (result.requiresRegistrationCompletion !== undefined) {
-      responseData.requiresRegistrationCompletion =
-        result.requiresRegistrationCompletion;
-    }
-
-    let message = "Login successful";
-    if (responseData.requiresRegistrationCompletion) {
-      message = "Login successful. Please complete your registration.";
-    }
-
-    return successResponse(res, responseData, message);
+    return successResponse(res, responseData, "Login successful");
   } catch (error) {
     return handleError(res, error);
   }
@@ -246,7 +244,7 @@ export const refreshTokenController = async (req: Request, res: Response) => {
       res,
       {
         accessToken: result.accessToken,
-        expiresIn: 7 * 24 * 60 * 60, // 7 days in seconds (604800 seconds)
+        expiresIn: 7 * 24 * 60 * 60,
       },
       "Token refreshed successfully"
     );
@@ -323,6 +321,21 @@ export const updateProfileController = async (req: Request, res: Response) => {
       });
     }
 
+    // Validate that only allowed fields are being updated
+    const allowedFields = ["name", "email", "phoneNumber"];
+    const invalidFields = Object.keys(updates).filter(
+      (field) => !allowedFields.includes(field)
+    );
+
+    if (invalidFields.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid fields: ${invalidFields.join(
+          ", "
+        )}. Allowed fields: ${allowedFields.join(", ")}`,
+      });
+    }
+
     const updatedUser = await updateUserProfile(userId, updates);
 
     return successResponse(
@@ -331,6 +344,7 @@ export const updateProfileController = async (req: Request, res: Response) => {
         id: updatedUser.id,
         email: updatedUser.email,
         name: updatedUser.name,
+        phoneNumber: updatedUser.phoneNumber,
         role: updatedUser.role,
         emailVerified: updatedUser.emailVerified,
       },
@@ -344,7 +358,7 @@ export const updateProfileController = async (req: Request, res: Response) => {
 };
 
 /**
- * Create Rider Account (Owner only) - Creates account and sends login details
+ * Create Rider Account (Owner only) - New version with registration/invitation links
  */
 export const createRiderAccountController = async (
   req: Request,
@@ -369,24 +383,28 @@ export const createRiderAccountController = async (
       });
     }
 
-    const rider = await createRiderAccount(
+    const result = await createRiderAccount(
       userId,
       orgId,
       riderEmail,
       riderName
     );
 
+    let message = "Rider invitation sent successfully";
+    if (!result.id) {
+      message = "Invitation sent to existing rider to join your organization";
+    }
+
     return successResponse(
       res,
       {
-        id: rider.id,
-        email: rider.email,
-        name: rider.name,
-        role: rider.role,
-        orgId: rider.orgId,
-        emailVerified: rider.emailVerified,
+        email: result.email,
+        name: result.name,
+        emailSent: result.emailSent,
+        emailType: result.emailType,
+        token: result.token,
       },
-      "Rider account created successfully. Login details have been sent to the rider's email."
+      message
     );
   } catch (error) {
     return handleError(res, error);
@@ -394,27 +412,19 @@ export const createRiderAccountController = async (
 };
 
 /**
- * Complete Rider Registration (Rider only) - After login, rider completes registration
+ * Complete Rider Registration via Token (Public)
  */
-export const completeRiderRegistrationController = async (
+export const completeRiderRegistrationViaTokenController = async (
   req: Request,
   res: Response
 ) => {
   try {
-    const userId = (req as any).user?.userId;
-    const { email, name, password } = req.body;
+    const { token, password, phoneNumber } = req.body;
 
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: "Authentication required",
-      });
-    }
-
-    if (!email || !name || !password) {
+    if (!token || !password || !phoneNumber) {
       return res.status(400).json({
         success: false,
-        message: "Email, name, and password are required",
+        message: "Token, phoneNumber and password are required",
       });
     }
 
@@ -425,11 +435,10 @@ export const completeRiderRegistrationController = async (
       });
     }
 
-    const rider = await completeRiderRegistration(
-      userId,
-      email,
-      name,
-      password
+    const rider = await completeRiderRegistrationViaToken(
+      token,
+      password,
+      phoneNumber
     );
 
     return successResponse(
@@ -441,6 +450,137 @@ export const completeRiderRegistrationController = async (
         role: rider.role,
         orgId: rider.orgId,
         emailVerified: rider.emailVerified,
+        registrationCompleted: rider.registrationCompleted,
+      },
+      "Registration completed. Please check your email for OTP to verify your account."
+    );
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+/**
+ * Accept Invitation (Public)
+ */
+export const acceptInvitationController = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: "Token is required",
+      });
+    }
+
+    const result = await acceptInvitation(token);
+
+    return successResponse(
+      res,
+      {
+        id: result.id,
+        email: result.email,
+        name: result.name,
+        role: result.role,
+        orgId: result.orgId,
+      },
+      "Invitation accepted successfully. You are now part of the organization."
+    );
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+/**
+ * Create Customer Account (Business Owner Action)
+ */
+export const createCustomerAccountController = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const userId = (req as any).user?.userId;
+    const orgId = (req as any).user?.orgId;
+    const { customerEmail, customerName } = req.body;
+
+    if (!userId || !orgId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    if (!customerEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "Customer email is required",
+      });
+    }
+
+    const result = await createCustomerAccount(
+      userId,
+      orgId,
+      customerEmail,
+      customerName
+    );
+
+    return successResponse(
+      res,
+      {
+        email: result.email,
+        name: result.name,
+        emailSent: result.emailSent,
+        token: result.token,
+      },
+      "Customer registration link sent successfully"
+    );
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+/**
+ * Complete Customer Registration via Token (Public)
+ */
+export const completeCustomerRegistrationViaTokenController = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { token, password, name } = req.body;
+
+    if (!token || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Token and password are required",
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters long",
+      });
+    }
+
+    const customer = await completeCustomerRegistrationViaToken(
+      token,
+      password,
+      name
+    );
+
+    return successResponse(
+      res,
+      {
+        id: customer.id,
+        email: customer.email,
+        name: customer.name,
+        role: customer.role,
+        emailVerified: customer.emailVerified,
+        registrationCompleted: customer.registrationCompleted,
       },
       "Registration completed. Please check your email for OTP to verify your account."
     );
@@ -514,7 +654,6 @@ export const forgotPasswordController = async (req: Request, res: Response) => {
 
     await initiatePasswordReset(email);
 
-    // Always return success even if email doesn't exist (security best practice)
     return successResponse(
       res,
       null,

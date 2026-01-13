@@ -58,7 +58,7 @@ app.use((req, res, next) => {
 app.use(errorHandler);
 
 // Start server
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`
 🚀 Server running on port ${PORT}
 📍 http://localhost:${PORT}
@@ -66,3 +66,13 @@ app.listen(PORT, () => {
 📅 ${new Date().toISOString()}
   `);
 });
+
+// Set server timeout (in milliseconds)
+// 2 minutes = 120000ms
+server.timeout = 120000;
+
+// Optional: Set keep-alive timeout (should be higher than timeout)
+server.keepAliveTimeout = 125000;
+
+// Optional: Set headers timeout (should be higher than keepAliveTimeout)
+server.headersTimeout = 130000;

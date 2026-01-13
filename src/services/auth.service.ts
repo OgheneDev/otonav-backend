@@ -3,15 +3,14 @@ import jwt from "jsonwebtoken";
 import type { SignOptions } from "jsonwebtoken";
 import { db } from "../config/database.js";
 import { users, organizations, auditLogs } from "../models/schema.js";
-import { eq, gt, sql, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { sendEmail } from "./email.service.js";
 import { generateOTP, getOTPExpiration, verifyOTP } from "./otp.service.js";
 
 const JWT_SECRET: string = process.env.JWT_SECRET!;
 const ACCESS_EXPIRES_IN = "7d";
 const REFRESH_EXPIRES_IN = "30d";
-const APP_DOWNLOAD_URL =
-  process.env.APP_DOWNLOAD_URL || "https://your-app-download-link.com";
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 
 // --- Types ---
 export interface TokenPayload {
@@ -68,21 +67,62 @@ export const verifyToken = <T = TokenPayload>(token: string): T => {
   return jwt.verify(token, JWT_SECRET) as T;
 };
 
+// --- Token Generation for Registration/Invitation ---
+const generateRegistrationToken = (
+  email: string,
+  orgId: string,
+  role: string
+): string => {
+  return jwt.sign(
+    {
+      email,
+      orgId,
+      role,
+      type: "registration",
+    },
+    JWT_SECRET,
+    { expiresIn: "24h" }
+  );
+};
+
+const generateInvitationToken = (
+  email: string,
+  orgId: string,
+  role: string
+): string => {
+  return jwt.sign(
+    {
+      email,
+      orgId,
+      role,
+      type: "invitation",
+    },
+    JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+};
+
+// --- Link Generation ---
+const getRegistrationLink = (
+  token: string,
+  type: "rider" | "customer"
+): string => {
+  return `${FRONTEND_URL}/complete-registration?token=${token}&type=${type}`;
+};
+
+const getInvitationLink = (token: string): string => {
+  return `${FRONTEND_URL}/accept-invitation?token=${token}`;
+};
+
 // --- OTP Management ---
 const storeOTP = async (
   userId: string,
   otp: string,
   otpType: string,
-  dbClient?: any // Add optional database client parameter
+  dbClient?: any
 ) => {
   const otpExpires = getOTPExpiration();
-
-  // Use provided dbClient or default to global db
   const client = dbClient || db;
-
-  console.log("=== STORE OTP DEBUG ===");
-  console.log("User ID:", userId);
-  console.log("Using client:", dbClient ? "Transaction" : "Global DB");
 
   const result = await client
     .update(users)
@@ -94,13 +134,10 @@ const storeOTP = async (
     .where(eq(users.id, userId))
     .returning({ id: users.id, email: users.email });
 
-  console.log("Update result:", result);
-
   if (!result || result.length === 0) {
     throw new Error(`No user found with ID: ${userId}`);
   }
 
-  console.log("SUCCESS: OTP stored for user:", result[0].email);
   return result[0];
 };
 
@@ -136,7 +173,7 @@ const sendVerificationOTPEmail = async (
           </div>
           <div style="font-size: 14px; color: #666;">
             Valid for 10 minutes
-          </div>
+          </div> 
         </div>
         
         <p style="color: #666; line-height: 1.6; margin-bottom: 25px;">
@@ -159,14 +196,15 @@ const sendVerificationOTPEmail = async (
   });
 };
 
-const sendRiderAccountCreatedEmail = async (
+const sendRiderRegistrationLinkEmail = async (
   email: string,
-  tempPassword: string,
-  businessName: string
+  registrationLink: string,
+  businessName: string,
+  riderName: string
 ) => {
   await sendEmail({
     to: email,
-    subject: `You've been added as a Rider - ${businessName}`,
+    subject: `Complete Your Rider Registration - ${businessName}`,
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
         <div style="text-align: center; margin-bottom: 30px;">
@@ -177,73 +215,165 @@ const sendRiderAccountCreatedEmail = async (
         
         <div style="background: #e8f5e9; padding: 15px; border-radius: 8px; margin-bottom: 25px;">
           <p style="color: #2e7d32; margin: 0; font-weight: bold; text-align: center;">
-            🚀 Welcome to the Team!
+            🚴‍♂️ Welcome to the Team!
           </p>
         </div>
         
         <h2 style="color: #333; margin-bottom: 20px; text-align: center;">
-          ${businessName} has added you as a Rider
+          ${businessName} has invited you to join as a Rider
         </h2>
         
         <p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
-          Your rider account has been created by <strong>${businessName}</strong>. 
-          You can now access the OtoNav platform.
+          Hello ${riderName},
         </p>
         
-        <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 25px 0; border-left: 4px solid #28a745;">
-          <p style="color: #333; font-weight: bold; margin-bottom: 15px;">📋 Your Login Details:</p>
-          <div style="background: white; padding: 15px; border-radius: 6px; margin: 10px 0;">
-            <p style="margin: 5px 0;"><strong>Email:</strong> ${email}</p>
-            <p style="margin: 5px 0;"><strong>Temporary Password:</strong> ${tempPassword}</p>
-          </div>
-          <p style="color: #dc3545; font-size: 14px; margin-top: 10px;">
-            ⚠️ Please change your password after first login
-          </p>
+        <p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+          You've been invited by <strong>${businessName}</strong> to join their delivery team on OtoNav.
+          Click the link below to complete your registration:
+        </p>
+        
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${registrationLink}" 
+             style="background: #28a745; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+            Complete Registration
+          </a>
         </div>
         
-        <div style="background: #f0f8ff; padding: 20px; border-radius: 8px; margin: 30px 0;">
-          <h3 style="color: #007bff; margin-bottom: 15px;">📱 Get Started</h3>
-          
-          <div style="display: flex; align-items: center; margin-bottom: 15px; padding: 10px; background: white; border-radius: 6px;">
-            <div style="font-size: 24px; margin-right: 15px;">1️⃣</div>
-            <div>
-              <p style="font-weight: bold; margin: 0; color: #333;">Download the App</p>
-              <a href="${APP_DOWNLOAD_URL}" style="color: #007bff; text-decoration: none; font-weight: 500;">
-                Click here to download OtoNav Rider App
-              </a>
-            </div>
-          </div>
-          
-          <div style="display: flex; align-items: center; margin-bottom: 15px; padding: 10px; background: white; border-radius: 6px;">
-            <div style="font-size: 24px; margin-right: 15px;">2️⃣</div>
-            <div>
-              <p style="font-weight: bold; margin: 0; color: #333;">Login with Temporary Credentials</p>
-              <p style="margin: 5px 0; color: #666;">Use the email and temporary password above</p>
-            </div>
-          </div>
-          
-          <div style="display: flex; align-items: center; padding: 10px; background: white; border-radius: 6px;">
-            <div style="font-size: 24px; margin-right: 15px;">3️⃣</div>
-            <div>
-              <p style="font-weight: bold; margin: 0; color: #333;">Complete Your Registration</p>
-              <p style="margin: 5px 0; color: #666;">Set your name, email, and new password. Verify your email with OTP.</p>
-            </div>
-          </div>
+        <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; margin: 25px 0;">
+          <p style="color: #0056b3; font-weight: bold; margin-bottom: 10px;">📋 What you'll need:</p>
+          <ul style="margin: 0; padding-left: 20px; color: #666;">
+            <li>Set your password</li>
+            <li>Add your phone number</li>
+            <li>Verify your account</li>
+          </ul>
         </div>
         
         <div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin: 25px 0;">
-          <p style="color: #856404; margin: 0; font-weight: bold; margin-bottom: 10px;">🔒 Security Notes:</p>
-          <ul style="color: #856404; margin: 0; padding-left: 20px;">
-            <li>Never share your login credentials</li>
-            <li>Change your password immediately after first login</li>
-            <li>Contact ${businessName} if you didn't expect this invitation</li>
+          <p style="color: #856404; margin: 0; font-weight: bold; margin-bottom: 10px;">⚠️ Important:</p>
+          <p style="color: #856404; margin: 0; font-size: 14px;">
+            This link will expire in 24 hours. If you didn't expect this invitation, please ignore this email.
+          </p>
+        </div>
+        
+        <div style="border-top: 1px solid #e0e0e0; padding-top: 20px; margin-top: 30px;">
+          <p style="font-size: 12px; color: #999; text-align: center;">
+            Invited by ${businessName} via OtoNav platform.
+            <br>Need help? Contact ${businessName} or support@otonav.com
+          </p>
+        </div>
+      </div>
+    `,
+  });
+};
+
+const sendRiderInvitationEmail = async (
+  email: string,
+  invitationLink: string,
+  businessName: string,
+  riderName: string
+) => {
+  await sendEmail({
+    to: email,
+    subject: `Join Our Delivery Team - ${businessName}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
+        <div style="text-align: center; margin-bottom: 30px;">
+          <h1 style="color: #ff6b35; margin-bottom: 5px;">OtoNav</h1>
+          <p style="color: #666; font-size: 14px;">Delivery Management Platform</p>
+          <div style="height: 3px; width: 100px; background: #ff6b35; margin: 10px auto;"></div>
+        </div>
+        
+        <div style="background: #ffe8e0; padding: 15px; border-radius: 8px; margin-bottom: 25px;">
+          <p style="color: #d84315; margin: 0; font-weight: bold; text-align: center;">
+            🤝 New Organization Invitation
+          </p>
+        </div>
+        
+        <h2 style="color: #333; margin-bottom: 20px; text-align: center;">
+          Join ${businessName}'s Delivery Team
+        </h2>
+        
+        <p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+          Hello ${riderName},
+        </p>
+        
+        <p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+          <strong>${businessName}</strong> has invited you to join their delivery team on OtoNav.
+          You already have an OtoNav account, so you can accept this invitation to work with them.
+        </p>
+        
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${invitationLink}" 
+             style="background: #ff6b35; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+            Accept Invitation
+          </a>
+        </div>
+        
+        <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; margin: 25px 0;">
+          <p style="color: #0056b3; font-weight: bold; margin-bottom: 10px;">ℹ️ How it works:</p>
+          <ul style="margin: 0; padding-left: 20px; color: #666;">
+            <li>You'll be added to ${businessName}'s organization</li>
+            <li>You can work with multiple businesses</li>
+            <li>Your existing account will remain active</li>
           </ul>
         </div>
         
         <div style="border-top: 1px solid #e0e0e0; padding-top: 20px; margin-top: 30px;">
           <p style="font-size: 12px; color: #999; text-align: center;">
-            This account was created by ${businessName} via OtoNav platform.
-            <br>Need help? Contact ${businessName} or support@otonav.com
+            This invitation will expire in 7 days.
+            <br>If you don't want to accept this invitation, simply ignore this email.
+          </p>
+        </div>
+      </div>
+    `,
+  });
+};
+
+const sendCustomerRegistrationLinkEmail = async (
+  email: string,
+  registrationLink: string,
+  businessName: string
+) => {
+  await sendEmail({
+    to: email,
+    subject: `Complete Your Registration with ${businessName}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
+        <div style="text-align: center; margin-bottom: 30px;">
+          <h1 style="color: #17a2b8; margin-bottom: 5px;">OtoNav</h1>
+          <p style="color: #666; font-size: 14px;">Delivery Management Platform</p>
+          <div style="height: 3px; width: 100px; background: #17a2b8; margin: 10px auto;"></div>
+        </div>
+        
+        <h2 style="color: #333; margin-bottom: 20px; text-align: center;">
+          Complete Your Registration with ${businessName}
+        </h2>
+        
+        <p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+          ${businessName} has added you as a customer on OtoNav. 
+          Click the link below to complete your registration and start placing orders:
+        </p>
+        
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${registrationLink}" 
+             style="background: #17a2b8; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+            Complete Registration
+          </a>
+        </div>
+        
+        <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; margin: 25px 0;">
+          <p style="color: #0056b3; font-weight: bold; margin-bottom: 10px;">What to expect:</p>
+          <ul style="margin: 0; padding-left: 20px; color: #666;">
+            <li>Set your password</li>
+            <li>Add your name (optional)</li>
+            <li>Verify your account</li>
+          </ul>
+        </div>
+        
+        <div style="border-top: 1px solid #e0e0e0; padding-top: 20px; margin-top: 30px;">
+          <p style="font-size: 12px; color: #999; text-align: center;">
+            This link will expire in 24 hours.
+            <br>If you didn't expect this invitation, please ignore this email.
           </p>
         </div>
       </div>
@@ -319,9 +449,9 @@ export const registerBusiness = async (
   email: string,
   password: string,
   name: string,
-  businessName: string
+  businessName: string,
+  phoneNumber: string
 ) => {
-  // Check if email already exists
   const existing = await db.query.users.findFirst({
     where: eq(users.email, email),
   });
@@ -331,7 +461,6 @@ export const registerBusiness = async (
 
   return await db
     .transaction(async (tx) => {
-      // 1. Create Organization
       const [org] = await tx
         .insert(organizations)
         .values({
@@ -339,13 +468,13 @@ export const registerBusiness = async (
         })
         .returning();
 
-      // 2. Create Owner User
       const [user] = await tx
         .insert(users)
         .values({
           email,
           password: passwordHash,
           name,
+          phoneNumber: phoneNumber,
           role: "owner",
           orgId: org.id,
           emailVerified: false,
@@ -353,17 +482,14 @@ export const registerBusiness = async (
         })
         .returning();
 
-      // 3. Update organization with owner reference
       await tx
         .update(organizations)
         .set({ ownerUserId: user.id })
         .where(eq(organizations.id, org.id));
 
-      // 4. Generate and store OTP - PASS THE TRANSACTION
       const otp = generateOTP();
-      await storeOTP(user.id, otp, "verify", tx); // Pass tx as 4th parameter
+      await storeOTP(user.id, otp, "verify", tx);
 
-      // 5. Audit Log
       await tx.insert(auditLogs).values({
         orgId: org.id,
         userId: user.id,
@@ -372,33 +498,32 @@ export const registerBusiness = async (
         timestamp: new Date(),
       });
 
-      // Send email (this can be outside transaction)
-      // We'll send it after transaction commits
-
       return {
         user,
         org,
-        otp, // Return OTP to send email after transaction
+        otp,
       };
     })
     .then(async (result) => {
-      // After transaction commits successfully, send the email
       await sendVerificationOTPEmail(email, result.otp, name || "");
-
-      // Return only user and org (not otp)
-      return { user: result.user, org: result.org };
+      // Return OTP in response for testing
+      return {
+        user: result.user,
+        org: result.org,
+        otp: result.otp, // Added for testing
+      };
     });
 };
 
 /**
- * Register a Customer
+ * Register a Customer (Public registration)
  */
 export const registerCustomer = async (
   email: string,
   password: string,
-  name: string
+  name: string,
+  phoneNumber: string
 ) => {
-  // Check if email already exists
   const existing = await db.query.users.findFirst({
     where: eq(users.email, email),
   });
@@ -412,6 +537,7 @@ export const registerCustomer = async (
       email,
       password: passwordHash,
       name,
+      phoneNumber: phoneNumber,
       role: "customer",
       orgId: null,
       emailVerified: false,
@@ -419,12 +545,15 @@ export const registerCustomer = async (
     })
     .returning();
 
-  // Generate and send OTP
   const otp = generateOTP();
   await storeOTP(customer.id, otp, "verify");
   await sendVerificationOTPEmail(email, otp, name || "");
 
-  return customer;
+  // Return OTP in response for testing
+  return {
+    ...customer,
+    otp: otp,
+  };
 };
 
 /**
@@ -445,23 +574,6 @@ export const verifyEmailWithOTP = async (
   if (user.emailVerified) {
     return true;
   }
-
-  // ADD DEBUGGING LOGS
-  console.log("=== DEBUG OTP VERIFICATION ===");
-  console.log("User OTP from DB:", user.otpCode);
-  console.log("Input OTP:", otp);
-  console.log("OTP Type from DB:", user.otpType);
-  console.log("OTP Expires from DB:", user.otpExpires);
-  console.log("Current time:", new Date());
-
-  // Debug the verifyOTP function
-  const otpMatches = user.otpCode === otp;
-  const isExpired = user.otpExpires ? user.otpExpires < new Date() : true;
-
-  console.log("OTP matches:", otpMatches);
-  console.log("OTP expired:", isExpired);
-  console.log("OTP Type correct:", user.otpType === "verify");
-  console.log("=== END DEBUG ===");
 
   if (
     !verifyOTP(otp, user.otpCode || "", user.otpExpires || new Date()) ||
@@ -486,9 +598,6 @@ export const verifyEmailWithOTP = async (
 /**
  * Authenticate User (Login)
  */
-/**
- * Authenticate User (Login) - Updated with registrationCompleted check
- */
 export const authenticateUser = async (email: string, password: string) => {
   const user = await db.query.users.findFirst({
     where: eq(users.email, email),
@@ -498,48 +607,16 @@ export const authenticateUser = async (email: string, password: string) => {
     throw new Error("Invalid credentials");
   }
 
-  // Check if rider needs to complete registration
-  const needsRegistrationCompletion =
-    user.role === "rider" && !user.registrationCompleted; // ← Make sure this field exists in your users table
-
-  // For riders who haven't completed registration, allow login without email verification
-  if (needsRegistrationCompletion) {
-    // Update last login
-    await db
-      .update(users)
-      .set({ lastLoginAt: new Date() })
-      .where(eq(users.id, user.id));
-
-    const accessToken = generateAccessToken({
-      userId: user.id,
-      email: user.email,
-      orgId: user.orgId,
-      role: user.role,
-    });
-
-    const refreshToken = generateRefreshToken({
-      userId: user.id,
-      tokenVersion: user.tokenVersion || 1,
-    });
-
-    return {
-      user,
-      accessToken,
-      refreshToken,
-      requiresRegistrationCompletion: true,
-    };
-  }
-
-  // For all other users (including riders who have completed registration), require email verification
   if (!user.emailVerified) {
-    // Resend verification OTP if not verified
     const otp = generateOTP();
     await storeOTP(user.id, otp, "verify");
     await sendVerificationOTPEmail(email, otp, user.name || "");
-    throw new Error("Please verify your email. A new OTP has been sent.");
+    // Return OTP in response for testing when email is not verified
+    throw new Error(
+      `Please verify your email. A new OTP has been sent. OTP for testing: ${otp}`
+    );
   }
 
-  // Update last login for verified users
   await db
     .update(users)
     .set({ lastLoginAt: new Date() })
@@ -561,7 +638,6 @@ export const authenticateUser = async (email: string, password: string) => {
     user,
     accessToken,
     refreshToken,
-    requiresRegistrationCompletion: false,
   };
 };
 
@@ -580,6 +656,8 @@ export const getUserById = async (userId: string) => {
       emailVerified: true,
       createdAt: true,
       lastLoginAt: true,
+      phoneNumber: true,
+      registrationCompleted: true,
     },
   });
 
@@ -591,20 +669,7 @@ export const getUserById = async (userId: string) => {
 };
 
 /**
- * Generate a random temporary password
- */
-const generateTemporaryPassword = (): string => {
-  const chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let password = "";
-  for (let i = 0; i < 10; i++) {
-    password += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return password;
-};
-
-/**
- * Create Rider Account (Owner Action) - Creates account and sends login details
+ * Create Rider Account (Owner Action) - New version with registration/invitation links
  */
 export const createRiderAccount = async (
   ownerId: string,
@@ -612,7 +677,6 @@ export const createRiderAccount = async (
   riderEmail: string,
   riderName: string
 ) => {
-  // Check if owner belongs to the organization
   const owner = await db.query.users.findFirst({
     where: and(eq(users.id, ownerId), eq(users.orgId, orgId)),
   });
@@ -621,19 +685,10 @@ export const createRiderAccount = async (
     throw new Error("Unauthorized: Only owners can create rider accounts");
   }
 
-  // Check if email is already a verified user
   const existingUser = await db.query.users.findFirst({
     where: eq(users.email, riderEmail),
   });
 
-  if (existingUser) {
-    if (existingUser.emailVerified) {
-      throw new Error("Email already registered and verified");
-    }
-    // If user exists but not verified, we can update it
-  }
-
-  // Get organization name
   const org = await db.query.organizations.findFirst({
     where: eq(organizations.id, orgId),
   });
@@ -642,173 +697,575 @@ export const createRiderAccount = async (
     throw new Error("Organization not found");
   }
 
-  const temporaryPassword = generateTemporaryPassword();
-  const passwordHash = await hashPassword(temporaryPassword);
-
   return await db.transaction(async (tx) => {
     let rider;
+    let token;
+    let emailType;
+    let registrationLink = "";
+    let invitationLink = "";
 
-    if (existingUser && !existingUser.emailVerified) {
-      // Update existing unverified user
-      [rider] = await tx
-        .update(users)
-        .set({
-          name: riderName,
-          password: passwordHash,
-          role: "rider",
-          orgId: orgId,
-          emailVerified: false,
-          registrationCompleted: false, // Rider hasn't completed registration yet
-          otpCode: null,
-          otpExpires: null,
-          otpType: null,
-          tokenVersion: 1,
-        })
-        .where(eq(users.id, existingUser.id))
-        .returning();
+    if (existingUser) {
+      if (existingUser.orgId && existingUser.orgId !== orgId) {
+        // Send invitation to join new organization
+        token = generateInvitationToken(riderEmail, orgId, "rider");
+        invitationLink = getInvitationLink(token);
+        emailType = "invitation";
+
+        await sendRiderInvitationEmail(
+          riderEmail,
+          invitationLink,
+          org.name,
+          riderName
+        );
+
+        await tx
+          .update(users)
+          .set({
+            invitationToken: token,
+            invitationTokenExpires: new Date(
+              Date.now() + 7 * 24 * 60 * 60 * 1000
+            ),
+            invitedByOrgId: orgId,
+          })
+          .where(eq(users.id, existingUser.id));
+      } else {
+        // User exists in same org or no org
+        token = generateRegistrationToken(riderEmail, orgId, "rider");
+        registrationLink = getRegistrationLink(token, "rider");
+        emailType = "registration";
+
+        await sendRiderRegistrationLinkEmail(
+          riderEmail,
+          registrationLink,
+          org.name,
+          riderName
+        );
+
+        [rider] = await tx
+          .update(users)
+          .set({
+            name: riderName,
+            role: "rider",
+            orgId: orgId,
+            registrationToken: token,
+            registrationTokenExpires: new Date(
+              Date.now() + 24 * 60 * 60 * 1000
+            ),
+            registrationCompleted: false,
+          })
+          .where(eq(users.id, existingUser.id))
+          .returning();
+      }
     } else {
-      // Create new rider account
+      // New user - send registration link
+      token = generateRegistrationToken(riderEmail, orgId, "rider");
+      registrationLink = getRegistrationLink(token, "rider");
+      emailType = "registration";
+
+      // Generate a temporary password (will be changed during registration)
+      const tempPassword = `temp_${Math.random().toString(36).slice(2, 12)}`;
+      const tempPasswordHash = await hashPassword(tempPassword);
+
       [rider] = await tx
         .insert(users)
         .values({
           email: riderEmail,
-          password: passwordHash,
+          password: tempPasswordHash,
           name: riderName,
           role: "rider",
           orgId: orgId,
           emailVerified: false,
-          registrationCompleted: false, // Rider hasn't completed registration yet
+          registrationCompleted: false,
+          registrationToken: token,
+          registrationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
           tokenVersion: 1,
         })
         .returning();
+
+      await sendRiderRegistrationLinkEmail(
+        riderEmail,
+        registrationLink,
+        org.name,
+        riderName
+      );
     }
 
-    // Send email with login details
-    await sendRiderAccountCreatedEmail(riderEmail, temporaryPassword, org.name);
-
-    // Audit Log
     await tx.insert(auditLogs).values({
       orgId: orgId,
       userId: ownerId,
-      action: "rider.account_created",
+      action:
+        emailType === "invitation" ? "rider.invited" : "rider.account_created",
       severity: "info",
       details: {
         riderEmail,
         riderName,
+        emailType,
         createdBy: owner.email,
       },
       timestamp: new Date(),
     });
 
+    // Return token/link in response for testing
     return {
-      id: rider.id,
-      email: rider.email,
-      name: rider.name,
-      role: rider.role,
-      orgId: rider.orgId,
-      emailVerified: rider.emailVerified,
-      registrationCompleted: rider.registrationCompleted,
+      id: rider?.id || existingUser?.id,
+      email: riderEmail,
+      name: riderName,
+      emailSent: true,
+      emailType,
+      token: token, // Added for testing
+      registrationLink: registrationLink || null, // Added for testing
+      invitationLink: invitationLink || null, // Added for testing
     };
   });
 };
 
 /**
- * Complete Rider Registration - Fixed version (no transaction issues)
+ * Complete Rider Registration via Token (Public)
  */
-/**
- * Complete Rider Registration - Fixed OTP issue
- */
-export const completeRiderRegistration = async (
-  riderId: string,
-  email: string,
-  name: string,
-  password: string
+export const completeRiderRegistrationViaToken = async (
+  token: string,
+  password: string,
+  phoneNumber?: string
 ) => {
-  // 1. Check if rider exists
-  const rider = await db.query.users.findFirst({
-    where: and(eq(users.id, riderId), eq(users.role, "rider")),
-  });
+  console.log("=== Debug: Rider Registration ===");
+  console.log("Received token:", token);
+  console.log("Token length:", token.length);
 
-  if (!rider) {
-    throw new Error("Rider not found");
+  if (!token || token.trim() === "") {
+    throw new Error("Token is required");
   }
 
-  // 2. Check if registration already completed
-  if (rider.registrationCompleted) {
-    throw new Error("Registration already completed");
+  // Clean the token - remove any query parameters appended to it
+  let cleanToken = token;
+
+  // Check if token contains '&' (query parameters)
+  if (token.includes("&")) {
+    // Split by '&' and take the first part (the actual JWT)
+    cleanToken = token.split("&")[0];
+    console.log("Cleaned token from URL params:", cleanToken);
+    console.log("Original had query params:", token.split("&").slice(1));
   }
 
-  // 3. Check if email is available (if changing email)
-  if (email !== rider.email) {
-    const existingUser = await db.query.users.findFirst({
-      where: and(eq(users.email, email), sql`${users.id} != ${riderId}`),
-    });
-
-    if (existingUser) {
-      throw new Error("Email already in use by another account");
+  // Also check if token starts with common prefixes
+  if (cleanToken.includes("token=")) {
+    // Extract token from 'token=xxx' format
+    const match = cleanToken.match(/token=([^&]+)/);
+    if (match) {
+      cleanToken = match[1];
+      console.log("Extracted token from token= param:", cleanToken);
     }
   }
 
-  // 4. Hash the new password
-  const passwordHash = await hashPassword(password);
+  // Decode the JWT token first to get the email
+  let payload;
+  try {
+    const decoded = jwt.decode(cleanToken) as any;
+    console.log("Decoded token payload:", decoded);
 
-  // 5. Generate NEW OTP for verification
+    if (!decoded || !decoded.email) {
+      console.error("Invalid token structure. Decoded:", decoded);
+      throw new Error("Invalid token structure");
+    }
+
+    payload = jwt.verify(cleanToken, JWT_SECRET) as any;
+    console.log("Verified JWT payload:", payload);
+  } catch (error: any) {
+    console.error("JWT error:", error.message);
+    console.error("Error name:", error.name);
+    console.error("Clean token used:", cleanToken.substring(0, 50) + "...");
+    throw new Error(`Invalid token: ${error.message}`);
+  }
+
+  // Validate token type and role
+  if (payload.type !== "registration") {
+    throw new Error(
+      `Invalid token type. Expected "registration", got "${payload.type}"`
+    );
+  }
+
+  if (payload.role !== "rider") {
+    throw new Error(`Invalid role. Expected "rider", got "${payload.role}"`);
+  }
+
+  const { email, orgId } = payload;
+
+  // Try multiple query approaches to find the user
+  let user = null;
+
+  // First try: Find by registration token (try both cleaned and original)
+  user = await db.query.users.findFirst({
+    where: eq(users.registrationToken, cleanToken),
+  });
+
+  console.log("User found by cleanToken:", user?.email || "Not found");
+
+  // Second try: If not found, try with original token
+  if (!user && token !== cleanToken) {
+    user = await db.query.users.findFirst({
+      where: eq(users.registrationToken, token),
+    });
+    console.log("User found by original token:", user?.email || "Not found");
+  }
+
+  // Third try: If not found by token, try by email
+  if (!user) {
+    user = await db.query.users.findFirst({
+      where: eq(users.email, email),
+    });
+
+    console.log("User found by email:", user?.email || "Not found");
+
+    if (user) {
+      console.log(
+        "Stored token in DB:",
+        user.registrationToken?.substring(0, 30) + "..."
+      );
+      console.log("Clean token used:", cleanToken.substring(0, 30) + "...");
+
+      // Check if tokens match (try both cleaned and original)
+      if (
+        user.registrationToken !== cleanToken &&
+        user.registrationToken !== token
+      ) {
+        console.log("Token mismatch detected");
+        throw new Error("Token does not match stored token");
+      }
+    }
+  }
+
+  if (!user) {
+    throw new Error(`No user found with email: ${email}`);
+  }
+
+  // Check if token has expired
+  if (!user.registrationTokenExpires) {
+    throw new Error("Registration token has no expiry date");
+  }
+
+  const now = new Date();
+  const expiryDate = new Date(user.registrationTokenExpires);
+  console.log("Token expiry check:", {
+    now: now.toISOString(),
+    expiry: expiryDate.toISOString(),
+    isExpired: expiryDate < now,
+  });
+
+  if (expiryDate < now) {
+    throw new Error(
+      `Registration token expired on ${expiryDate.toISOString()}`
+    );
+  }
+
+  // Validate orgId matches
+  if (user.orgId !== orgId) {
+    console.log("OrgId mismatch:", {
+      tokenOrgId: orgId,
+      userOrgId: user.orgId,
+    });
+    throw new Error("Token organization mismatch");
+  }
+
+  const passwordHash = await hashPassword(password);
   const otp = generateOTP();
   const otpExpires = getOTPExpiration();
 
-  // 6. SINGLE database update - Update all fields including clearing old OTP
-  const [updatedRider] = await db
+  const [updatedUser] = await db
     .update(users)
     .set({
-      email: email,
-      name: name,
       password: passwordHash,
+      phoneNumber: phoneNumber || null,
       registrationCompleted: true,
-      emailVerified: false,
-      // Clear any existing OTPs and set new one
+      registrationToken: null,
+      registrationTokenExpires: null,
       otpCode: otp,
       otpExpires: otpExpires,
       otpType: "verify",
-      // Also clear any other auth tokens
-      verificationToken: null,
-      resetPasswordToken: null,
-      resetPasswordExpires: null,
     })
-    .where(eq(users.id, riderId))
+    .where(eq(users.id, user.id))
     .returning();
 
-  if (!updatedRider) {
-    throw new Error("Failed to update rider");
+  await sendVerificationOTPEmail(user.email, otp, updatedUser.name || "");
+
+  await db.insert(auditLogs).values({
+    orgId: user.orgId,
+    userId: updatedUser.id,
+    action: "rider.registration_completed",
+    severity: "info",
+    details: {
+      viaToken: true,
+      completedAt: new Date().toISOString(),
+    },
+    timestamp: new Date(),
+  });
+
+  console.log("=== Registration successful ===");
+
+  // Return OTP in response for testing
+  return {
+    id: updatedUser.id,
+    email: updatedUser.email,
+    name: updatedUser.name,
+    role: updatedUser.role,
+    orgId: updatedUser.orgId,
+    emailVerified: updatedUser.emailVerified,
+    registrationCompleted: updatedUser.registrationCompleted,
+    otp: otp, // Added for testing
+  };
+};
+
+/**
+ * Accept Invitation (Public)
+ */
+export const acceptInvitation = async (token: string) => {
+  let payload;
+  try {
+    payload = jwt.verify(token, JWT_SECRET) as any;
+  } catch (error) {
+    throw new Error("Invalid or expired token");
   }
 
-  // 7. Send verification email ASYNC
-  sendVerificationOTPEmail(email, otp, name || "").catch((error) =>
-    console.error("Failed to send verification email:", error)
-  );
+  if (payload.type !== "invitation" || payload.role !== "rider") {
+    throw new Error("Invalid token type");
+  }
 
-  // 8. Create audit log (async)
-  db.insert(auditLogs)
-    .values({
-      orgId: rider.orgId,
-      userId: riderId,
-      action: "rider.registration_completed",
-      severity: "info",
-      details: {
-        oldEmail: rider.email,
-        newEmail: email,
-      },
-      timestamp: new Date(),
+  const { email, orgId } = payload;
+
+  const user = await db.query.users.findFirst({
+    where: and(
+      eq(users.email, email),
+      eq(users.invitationToken, token),
+      sql`${users.invitationTokenExpires} > NOW()`
+    ),
+  });
+
+  if (!user) {
+    throw new Error("Invalid invitation token or token expired");
+  }
+
+  const [updatedUser] = await db
+    .update(users)
+    .set({
+      orgId: orgId,
+      invitationToken: null,
+      invitationTokenExpires: null,
+      invitedByOrgId: null,
     })
-    .catch((error) => console.error("Failed to create audit log:", error));
+    .where(eq(users.id, user.id))
+    .returning();
+
+  const org = await db.query.organizations.findFirst({
+    where: eq(organizations.id, orgId),
+  });
+
+  await db.insert(auditLogs).values({
+    orgId: orgId,
+    userId: updatedUser.id,
+    action: "rider.invitation_accepted",
+    severity: "info",
+    details: {
+      organizationName: org?.name,
+    },
+    timestamp: new Date(),
+  });
 
   return {
-    id: updatedRider.id,
-    email: updatedRider.email,
-    name: updatedRider.name,
-    role: updatedRider.role,
-    orgId: updatedRider.orgId,
-    emailVerified: updatedRider.emailVerified,
-    registrationCompleted: updatedRider.registrationCompleted,
+    id: updatedUser.id,
+    email: updatedUser.email,
+    name: updatedUser.name,
+    role: updatedUser.role,
+    orgId: updatedUser.orgId,
+  };
+};
+
+/**
+ * Create Customer Account (Business Owner Action)
+ */
+export const createCustomerAccount = async (
+  ownerId: string,
+  orgId: string,
+  customerEmail: string,
+  customerName?: string
+) => {
+  const owner = await db.query.users.findFirst({
+    where: and(eq(users.id, ownerId), eq(users.orgId, orgId)),
+  });
+
+  if (!owner || owner.role !== "owner") {
+    throw new Error("Unauthorized: Only owners can create customer accounts");
+  }
+
+  const existingUser = await db.query.users.findFirst({
+    where: eq(users.email, customerEmail),
+  });
+
+  const org = await db.query.organizations.findFirst({
+    where: eq(organizations.id, orgId),
+  });
+
+  if (!org) {
+    throw new Error("Organization not found");
+  }
+
+  if (
+    existingUser &&
+    existingUser.role === "customer" &&
+    existingUser.emailVerified
+  ) {
+    throw new Error("Customer already exists and is verified");
+  }
+
+  return await db.transaction(async (tx) => {
+    let customer;
+    const token = generateRegistrationToken(customerEmail, orgId, "customer");
+    const registrationLink = getRegistrationLink(token, "customer");
+
+    if (existingUser && !existingUser.emailVerified) {
+      [customer] = await tx
+        .update(users)
+        .set({
+          name: customerName || existingUser.name,
+          role: "customer",
+          registrationToken: token,
+          registrationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        })
+        .where(eq(users.id, existingUser.id))
+        .returning();
+    } else {
+      // Generate a temporary password (will be changed during registration)
+      const tempPassword = `temp_${Math.random().toString(36).slice(2, 12)}`;
+      const tempPasswordHash = await hashPassword(tempPassword);
+
+      [customer] = await tx
+        .insert(users)
+        .values({
+          email: customerEmail,
+          password: tempPasswordHash,
+          name: customerName || null,
+          role: "customer",
+          emailVerified: false,
+          registrationToken: token,
+          registrationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          tokenVersion: 1,
+        })
+        .returning();
+    }
+
+    await sendCustomerRegistrationLinkEmail(
+      customerEmail,
+      registrationLink,
+      org.name
+    );
+
+    await tx.insert(auditLogs).values({
+      orgId: orgId,
+      userId: ownerId,
+      action: "customer.account_created",
+      severity: "info",
+      details: {
+        customerEmail,
+        customerName: customerName || "Not provided",
+        createdBy: owner.email,
+      },
+      timestamp: new Date(),
+    });
+
+    // Return token/link in response for testing
+    return {
+      id: customer.id,
+      email: customer.email,
+      name: customer.name,
+      emailSent: true,
+      token: token, // Added for testing
+      registrationLink: registrationLink, // Added for testing
+    };
+  });
+};
+
+/**
+ * Complete Customer Registration via Token (Public)
+ */
+export const completeCustomerRegistrationViaToken = async (
+  token: string,
+  password: string,
+  name?: string
+) => {
+  // First, find the user by the registration token
+  const user = await db.query.users.findFirst({
+    where: eq(users.registrationToken, token),
+  });
+
+  if (!user) {
+    throw new Error("Invalid registration token");
+  }
+
+  // Check if token has expired
+  if (
+    !user.registrationTokenExpires ||
+    user.registrationTokenExpires < new Date()
+  ) {
+    throw new Error("Registration token has expired");
+  }
+
+  // Now verify the JWT token
+  let payload;
+  try {
+    payload = jwt.verify(token, JWT_SECRET) as any;
+  } catch (error) {
+    console.error("JWT verification error:", error);
+    throw new Error("Invalid or expired token");
+  }
+
+  // Validate token type and role
+  if (payload.type !== "registration" || payload.role !== "customer") {
+    throw new Error("Invalid token type");
+  }
+
+  // Validate email matches
+  if (payload.email !== user.email) {
+    throw new Error("Token email mismatch");
+  }
+
+  const passwordHash = await hashPassword(password);
+  const otp = generateOTP();
+  const otpExpires = getOTPExpiration();
+
+  const updateData: any = {
+    password: passwordHash,
+    registrationCompleted: true,
+    registrationToken: null,
+    registrationTokenExpires: null,
+    otpCode: otp,
+    otpExpires: otpExpires,
+    otpType: "verify",
+  };
+
+  if (name) {
+    updateData.name = name;
+  }
+
+  const [updatedUser] = await db
+    .update(users)
+    .set(updateData)
+    .where(eq(users.id, user.id))
+    .returning();
+
+  await sendVerificationOTPEmail(user.email, otp, updatedUser.name || "");
+
+  // Return OTP in response for testing
+  return {
+    id: updatedUser.id,
+    email: updatedUser.email,
+    name: updatedUser.name,
+    role: updatedUser.role,
+    emailVerified: updatedUser.emailVerified,
+    registrationCompleted: updatedUser.registrationCompleted,
+    otp: otp, // Added for testing
+    token: generateAccessToken({
+      userId: updatedUser.id,
+      email: updatedUser.email,
+      orgId: updatedUser.orgId,
+      role: updatedUser.role,
+    }),
   };
 };
 
@@ -852,7 +1309,7 @@ export const logoutUser = async (userId: string) => {
  */
 export const updateUserProfile = async (
   userId: string,
-  updates: { name?: string | null; email?: string }
+  updates: { name?: string | null; email?: string; phoneNumber?: string }
 ) => {
   const updateData: any = {};
 
@@ -860,8 +1317,19 @@ export const updateUserProfile = async (
     updateData.name = updates.name;
   }
 
+  if (updates.phoneNumber !== undefined) {
+    // Validate phone number format (optional)
+    if (updates.phoneNumber && updates.phoneNumber.trim() !== "") {
+      // Basic phone validation - adjust as needed
+      const phoneRegex = /^[+]?[0-9\s\-\(\)]{10,}$/;
+      if (!phoneRegex.test(updates.phoneNumber)) {
+        throw new Error("Invalid phone number format");
+      }
+    }
+    updateData.phoneNumber = updates.phoneNumber || null;
+  }
+
   if (updates.email) {
-    // Check if email is already in use by another user
     const existingUser = await db.query.users.findFirst({
       where: and(eq(users.email, updates.email), sql`${users.id} != ${userId}`),
     });
@@ -873,7 +1341,6 @@ export const updateUserProfile = async (
     updateData.email = updates.email;
     updateData.emailVerified = false;
 
-    // Generate and send verification OTP for new email
     const otp = generateOTP();
     updateData.otpCode = otp;
     updateData.otpExpires = getOTPExpiration();
@@ -890,7 +1357,6 @@ export const updateUserProfile = async (
     .where(eq(users.id, userId))
     .returning();
 
-  // Send verification OTP if email was changed
   if (updates.email && updateData.otpCode) {
     await sendVerificationOTPEmail(
       updates.email,
@@ -910,7 +1376,6 @@ export const updateUserPassword = async (
   currentPassword: string,
   newPassword: string
 ) => {
-  // Get the user with password
   const user = await db.query.users.findFirst({
     where: eq(users.id, userId),
   });
@@ -919,27 +1384,23 @@ export const updateUserPassword = async (
     throw new Error("User not found");
   }
 
-  // Verify current password
   const isPasswordValid = await comparePassword(currentPassword, user.password);
   if (!isPasswordValid) {
     throw new Error("Current password is incorrect");
   }
 
-  // Hash new password
   const passwordHash = await hashPassword(newPassword);
 
-  // Update password and timestamp
   const [updatedUser] = await db
     .update(users)
     .set({
       password: passwordHash,
       lastPasswordChange: new Date(),
-      tokenVersion: sql`${users.tokenVersion} + 1`, // Invalidate all sessions
+      tokenVersion: sql`${users.tokenVersion} + 1`,
     })
     .where(eq(users.id, userId))
     .returning();
 
-  // Create audit log
   await db.insert(auditLogs).values({
     userId: user.id,
     action: "password.changed",
@@ -966,7 +1427,6 @@ export const resetPassword = async (
     throw new Error("User not found");
   }
 
-  // Verify OTP
   if (
     !verifyOTP(otp, user.otpCode || "", user.otpExpires || new Date()) ||
     user.otpType !== "reset"
@@ -986,12 +1446,11 @@ export const resetPassword = async (
       resetPasswordToken: null,
       resetPasswordExpires: null,
       lastPasswordChange: new Date(),
-      tokenVersion: sql`${users.tokenVersion} + 1`, // Invalidate all sessions
+      tokenVersion: sql`${users.tokenVersion} + 1`,
     })
     .where(eq(users.id, user.id))
     .returning();
 
-  // Create audit log
   await db.insert(auditLogs).values({
     userId: user.id,
     action: "password.reset",
@@ -1011,7 +1470,6 @@ export const initiatePasswordReset = async (email: string) => {
   });
 
   if (!user) {
-    // Don't reveal if user exists for security
     return;
   }
 
@@ -1019,7 +1477,6 @@ export const initiatePasswordReset = async (email: string) => {
   await storeOTP(user.id, otp, "reset");
   await sendPasswordResetOTPEmail(email, otp, user.name || "");
 
-  // Create audit log
   await db.insert(auditLogs).values({
     userId: user.id,
     action: "password.reset_initiated",

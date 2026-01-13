@@ -61,9 +61,13 @@ export const users = pgTable("users", {
   otpExpires: timestamp("otp_expires"),
   otpType: varchar("otp_type", { length: 20 }),
 
-  registrationCompleted: boolean("registration_completed")
-    .default(false)
-    .notNull(),
+  registrationToken: text("registration_token"),
+  registrationTokenExpires: timestamp("registration_token_expires"),
+  invitationToken: text("invitation_token"),
+  invitationTokenExpires: timestamp("invitation_token_expires"),
+  invitedByOrgId: uuid("invited_by_org_id").references(() => organizations.id),
+  phoneNumber: text("phone_number"),
+  registrationCompleted: boolean("registration_completed").default(false),
 
   // Metadata
   lastLoginAt: timestamp("last_login_at"),

@@ -19,6 +19,7 @@
  *         - password
  *         - name
  *         - businessName
+ *         - phoneNumber
  *       properties:
  *         email:
  *           type: string
@@ -35,12 +36,16 @@
  *         businessName:
  *           type: string
  *           example: Acme Logistics
+ *         phoneNumber:
+ *           type: string
+ *           example: "+1234567890"
  *     RegisterCustomer:
  *       type: object
  *       required:
  *         - email
  *         - password
  *         - name
+ *         - phoneNumber
  *       properties:
  *         email:
  *           type: string
@@ -54,6 +59,9 @@
  *         name:
  *           type: string
  *           example: Jane Smith
+ *         phoneNumber:
+ *           type: string
+ *           example: "+1234567890"
  *     Login:
  *       type: object
  *       required:
@@ -103,25 +111,66 @@
  *         riderName:
  *           type: string
  *           example: Mike Johnson
- *     CompleteRiderRegistration:
+ *     CompleteRiderRegistrationViaToken:
  *       type: object
  *       required:
- *         - email
- *         - name
+ *         - token
  *         - password
+ *         - phoneNumber
  *       properties:
- *         email:
+ *         token:
  *           type: string
- *           format: email
- *           example: rider@company.com
- *         name:
- *           type: string
- *           example: Mike Johnson
+ *           description: Registration token from email
+ *           example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
  *         password:
  *           type: string
  *           format: password
  *           minLength: 6
  *           example: newpassword123
+ *         phoneNumber:
+ *           type: string
+ *           example: "+1234567890"
+ *     AcceptInvitation:
+ *       type: object
+ *       required:
+ *         - token
+ *       properties:
+ *         token:
+ *           type: string
+ *           description: Invitation token from email
+ *           example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+ *     CreateCustomer:
+ *       type: object
+ *       required:
+ *         - customerEmail
+ *       properties:
+ *         customerEmail:
+ *           type: string
+ *           format: email
+ *           example: customer@company.com
+ *         customerName:
+ *           type: string
+ *           example: Sarah Wilson
+ *           nullable: true
+ *     CompleteCustomerRegistrationViaToken:
+ *       type: object
+ *       required:
+ *         - token
+ *         - password
+ *       properties:
+ *         token:
+ *           type: string
+ *           description: Registration token from email
+ *           example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+ *         password:
+ *           type: string
+ *           format: password
+ *           minLength: 6
+ *           example: newpassword123
+ *         name:
+ *           type: string
+ *           example: Sarah Wilson
+ *           nullable: true
  *     UpdateProfile:
  *       type: object
  *       properties:
@@ -133,6 +182,10 @@
  *           type: string
  *           format: email
  *           example: newemail@example.com
+ *         phoneNumber:
+ *           type: string
+ *           example: "+1234567890"
+ *           nullable: true
  *     ChangePassword:
  *       type: object
  *       required:
@@ -204,6 +257,9 @@
  *           type: boolean
  *         registrationCompleted:
  *           type: boolean
+ *         phoneNumber:
+ *           type: string
+ *           nullable: true
  *         createdAt:
  *           type: string
  *           format: date-time
@@ -232,9 +288,6 @@
  *               type: integer
  *               description: Access token expiry in seconds
  *               example: 604800
- *             requiresRegistrationCompletion:
- *               type: boolean
- *               description: Only for riders who need to complete registration
  *     ErrorResponse:
  *       type: object
  *       properties:
@@ -266,7 +319,7 @@
  *     summary: Register a business owner
  *     tags: [Auth]
  *     description: Public endpoint - No authentication required
- *     security: []  # Explicitly empty array for public endpoints
+ *     security: []
  *     requestBody:
  *       required: true
  *       content:
@@ -275,7 +328,7 @@
  *             $ref: '#/components/schemas/RegisterBusiness'
  *     responses:
  *       200:
- *         description: Business registered successfully
+ *         description: Business registered successfully. OTP sent for email verification.
  *         content:
  *           application/json:
  *             schema:
@@ -291,7 +344,26 @@
  *                   type: object
  *                   properties:
  *                     user:
- *                       $ref: '#/components/schemas/UserProfile'
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: string
+ *                           format: uuid
+ *                         email:
+ *                           type: string
+ *                           format: email
+ *                         name:
+ *                           type: string
+ *                         role:
+ *                           type: string
+ *                         orgId:
+ *                           type: string
+ *                           format: uuid
+ *                         emailVerified:
+ *                           type: boolean
+ *                         otp:
+ *                           type: string
+ *                           description: OTP for email verification (only for testing)
  *                     organization:
  *                       type: object
  *                       properties:
@@ -312,10 +384,10 @@
  * @swagger
  * /api/auth/register/customer:
  *   post:
- *     summary: Register a customer
+ *     summary: Register a customer (Public registration)
  *     tags: [Auth]
  *     description: Public endpoint - No authentication required
- *     security: []  # Explicitly empty array for public endpoints
+ *     security: []
  *     requestBody:
  *       required: true
  *       content:
@@ -324,7 +396,7 @@
  *             $ref: '#/components/schemas/RegisterCustomer'
  *     responses:
  *       200:
- *         description: Customer registered successfully
+ *         description: Customer registered successfully. OTP sent for email verification.
  *         content:
  *           application/json:
  *             schema:
@@ -337,7 +409,24 @@
  *                   type: string
  *                   example: Customer registration successful. Please check your email for OTP to verify your account.
  *                 data:
- *                   $ref: '#/components/schemas/UserProfile'
+ *                   type: object
+ *                   properties:
+ *                     id:
+ *                       type: string
+ *                       format: uuid
+ *                     email:
+ *                       type: string
+ *                       format: email
+ *                     name:
+ *                       type: string
+ *                     role:
+ *                       type: string
+ *                       example: customer
+ *                     emailVerified:
+ *                       type: boolean
+ *                     otp:
+ *                       type: string
+ *                       description: OTP for email verification (only for testing)
  *       400:
  *         description: Bad request
  *         content:
@@ -353,7 +442,7 @@
  *     summary: Login user
  *     tags: [Auth]
  *     description: Public endpoint - No authentication required
- *     security: []  # Explicitly empty array for public endpoints
+ *     security: []
  *     requestBody:
  *       required: true
  *       content:
@@ -387,7 +476,7 @@
  *     summary: Verify email with OTP
  *     tags: [Auth]
  *     description: Public endpoint - No authentication required
- *     security: []  # Explicitly empty array for public endpoints
+ *     security: []
  *     requestBody:
  *       required: true
  *       content:
@@ -423,7 +512,7 @@
  *     summary: Resend verification OTP
  *     tags: [Auth]
  *     description: Public endpoint - No authentication required
- *     security: []  # Explicitly empty array for public endpoints
+ *     security: []
  *     requestBody:
  *       required: true
  *       content:
@@ -459,7 +548,7 @@
  *     summary: Refresh access token
  *     tags: [Auth]
  *     description: Public endpoint - Requires refresh token (sent via body or cookie)
- *     security: []  # Explicitly empty array - uses refresh token instead of JWT
+ *     security: []
  *     requestBody:
  *       content:
  *         application/json:
@@ -498,7 +587,7 @@
  *     summary: Request password reset OTP
  *     tags: [Auth]
  *     description: Public endpoint - No authentication required
- *     security: []  # Explicitly empty array for public endpoints
+ *     security: []
  *     requestBody:
  *       required: true
  *       content:
@@ -534,7 +623,7 @@
  *     summary: Reset password with OTP
  *     tags: [Auth]
  *     description: Public endpoint - No authentication required
- *     security: []  # Explicitly empty array for public endpoints
+ *     security: []
  *     requestBody:
  *       required: true
  *       content:
@@ -582,7 +671,7 @@
  *     tags: [Auth]
  *     description: Protected endpoint - Requires valid JWT token
  *     security:
- *       - bearerAuth: []  # Requires JWT token
+ *       - bearerAuth: []
  *     responses:
  *       200:
  *         description: Logged out successfully
@@ -614,7 +703,7 @@
  *     tags: [Auth]
  *     description: Protected endpoint - Requires valid JWT token
  *     security:
- *       - bearerAuth: []  # Requires JWT token
+ *       - bearerAuth: []
  *     responses:
  *       200:
  *         description: User profile retrieved successfully
@@ -643,7 +732,7 @@
  *     tags: [Auth]
  *     description: Protected endpoint - Requires valid JWT token
  *     security:
- *       - bearerAuth: []  # Requires JWT token
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -663,7 +752,7 @@
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: Profile updated successfully. Please check your email for OTP to verify your new email address.
+ *                   example: Profile updated successfully
  *                 data:
  *                   type: object
  *                   properties:
@@ -675,6 +764,9 @@
  *                       format: email
  *                     name:
  *                       type: string
+ *                     phoneNumber:
+ *                       type: string
+ *                       nullable: true
  *                     role:
  *                       type: string
  *                     emailVerified:
@@ -697,7 +789,7 @@
  *     tags: [Auth]
  *     description: Protected endpoint - Requires valid JWT token
  *     security:
- *       - bearerAuth: []  # Requires JWT token
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -745,9 +837,14 @@
  *   post:
  *     summary: Create a rider account (Owner only)
  *     tags: [Auth]
- *     description: Protected endpoint - Requires owner role with valid JWT token
+ *     description: |
+ *       Protected endpoint - Requires owner role with valid JWT token.
+ *       Creates a rider account with registration/invitation flow.
+ *       - If rider email doesn't exist: Sends registration link
+ *       - If rider exists in another org: Sends invitation to join
+ *       - If rider exists in same org: Updates and sends registration link
  *     security:
- *       - bearerAuth: []  # Requires JWT token
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -756,7 +853,7 @@
  *             $ref: '#/components/schemas/CreateRider'
  *     responses:
  *       200:
- *         description: Rider account created successfully
+ *         description: Rider invitation/registration sent successfully
  *         content:
  *           application/json:
  *             schema:
@@ -767,26 +864,24 @@
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: Rider account created successfully. Login details have been sent to the rider's email.
+ *                   example: Rider invitation sent successfully
  *                 data:
  *                   type: object
  *                   properties:
- *                     id:
- *                       type: string
- *                       format: uuid
  *                     email:
  *                       type: string
  *                       format: email
  *                     name:
  *                       type: string
- *                     role:
- *                       type: string
- *                       example: rider
- *                     orgId:
- *                       type: string
- *                       format: uuid
- *                     emailVerified:
+ *                     emailSent:
  *                       type: boolean
+ *                       example: true
+ *                     emailType:
+ *                       type: string
+ *                       enum: [registration, invitation]
+ *                     token:
+ *                       type: string
+ *                       description: Registration/invitation token (for testing)
  *       400:
  *         description: Bad request
  *         content:
@@ -803,20 +898,22 @@
  * @swagger
  * /api/auth/rider/complete-registration:
  *   post:
- *     summary: Complete rider registration (Rider only)
+ *     summary: Complete rider registration via token (Public)
  *     tags: [Auth]
- *     description: Protected endpoint - Requires rider role with valid JWT token
- *     security:
- *       - bearerAuth: []  # Requires JWT token
+ *     description: |
+ *       Public endpoint - No authentication required.
+ *       Complete rider registration using token from email.
+ *       Sets password, phone number, and sends OTP for email verification.
+ *     security: []
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/CompleteRiderRegistration'
+ *             $ref: '#/components/schemas/CompleteRiderRegistrationViaToken'
  *     responses:
  *       200:
- *         description: Registration completed successfully
+ *         description: Registration completed. OTP sent for email verification.
  *         content:
  *           application/json:
  *             schema:
@@ -847,6 +944,120 @@
  *                       format: uuid
  *                     emailVerified:
  *                       type: boolean
+ *                     registrationCompleted:
+ *                       type: boolean
+ *                     otp:
+ *                       type: string
+ *                       description: OTP for email verification (only for testing)
+ *       400:
+ *         description: Bad request
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+
+/**
+ * @swagger
+ * /api/auth/invitation/accept:
+ *   post:
+ *     summary: Accept invitation to join organization (Public)
+ *     tags: [Auth]
+ *     description: |
+ *       Public endpoint - No authentication required.
+ *       Accept invitation from existing rider to join a new organization.
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/AcceptInvitation'
+ *     responses:
+ *       200:
+ *         description: Invitation accepted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: Invitation accepted successfully. You are now part of the organization.
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id:
+ *                       type: string
+ *                       format: uuid
+ *                     email:
+ *                       type: string
+ *                       format: email
+ *                     name:
+ *                       type: string
+ *                     role:
+ *                       type: string
+ *                       example: rider
+ *                     orgId:
+ *                       type: string
+ *                       format: uuid
+ *       400:
+ *         description: Bad request
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+
+/**
+ * @swagger
+ * /api/auth/customer/create:
+ *   post:
+ *     summary: Create a customer account (Owner only)
+ *     tags: [Auth]
+ *     description: |
+ *       Protected endpoint - Requires owner role with valid JWT token.
+ *       Creates a customer account for the business.
+ *       Sends registration link to customer's email.
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CreateCustomer'
+ *     responses:
+ *       200:
+ *         description: Customer registration link sent successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: Customer registration link sent successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     email:
+ *                       type: string
+ *                       format: email
+ *                     name:
+ *                       type: string
+ *                     emailSent:
+ *                       type: boolean
+ *                       example: true
+ *                     token:
+ *                       type: string
+ *                       description: Registration token (for testing)
  *       400:
  *         description: Bad request
  *         content:
@@ -857,4 +1068,67 @@
  *         $ref: '#/components/responses/UnauthorizedError'
  *       403:
  *         $ref: '#/components/responses/ForbiddenError'
+ */
+
+/**
+ * @swagger
+ * /api/auth/customer/complete-registration:
+ *   post:
+ *     summary: Complete customer registration via token (Public)
+ *     tags: [Auth]
+ *     description: |
+ *       Public endpoint - No authentication required.
+ *       Complete customer registration using token from email.
+ *       Sets password, name (optional), and sends OTP for email verification.
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CompleteCustomerRegistrationViaToken'
+ *     responses:
+ *       200:
+ *         description: Registration completed. OTP sent for email verification.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: Registration completed. Please check your email for OTP to verify your account.
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id:
+ *                       type: string
+ *                       format: uuid
+ *                     email:
+ *                       type: string
+ *                       format: email
+ *                     name:
+ *                       type: string
+ *                     role:
+ *                       type: string
+ *                       example: customer
+ *                     emailVerified:
+ *                       type: boolean
+ *                     registrationCompleted:
+ *                       type: boolean
+ *                     otp:
+ *                       type: string
+ *                       description: OTP for email verification (only for testing)
+ *                     token:
+ *                       type: string
+ *                       description: Access token for immediate login
+ *       400:
+ *         description: Bad request
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
