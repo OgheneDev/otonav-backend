@@ -17,6 +17,10 @@ const transporter = nodemailer.createTransport({
           pass: SMTP_PASS,
         }
       : undefined,
+  // Add timeouts to prevent hanging
+  connectionTimeout: 10000, // 10 seconds to establish connection
+  greetingTimeout: 10000, // 10 seconds to receive greeting from server
+  socketTimeout: 30000, // 30 seconds of socket inactivity before timeout
 });
 
 export interface EmailOptions {
@@ -36,6 +40,9 @@ export const sendEmail = async (options: EmailOptions): Promise<void> => {
   }
 
   try {
+    console.log(`📧 Attempting to send email to ${options.to}...`);
+    const startTime = Date.now();
+
     await transporter.sendMail({
       from: EMAIL_FROM,
       to: options.to,
@@ -43,8 +50,17 @@ export const sendEmail = async (options: EmailOptions): Promise<void> => {
       html: options.html,
       text: options.text || options.html.replace(/<[^>]*>/g, ""),
     });
+
+    const duration = Date.now() - startTime;
+    console.log(`✅ Email sent successfully to ${options.to} in ${duration}ms`);
   } catch (error) {
-    console.error("Failed to send email:", error);
+    console.error("❌ Failed to send email:", error);
+    console.error("SMTP Config:", {
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      user: SMTP_USER,
+      hasPassword: !!SMTP_PASS,
+    });
     throw new Error("Failed to send invitation email");
   }
 };
