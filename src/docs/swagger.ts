@@ -4,9 +4,9 @@ const swaggerOptions: swaggerJSDoc.Options = {
   definition: {
     openapi: "3.0.0",
     info: {
-      title: "Auth Service API",
+      title: "otoNav API",
       version: "1.0.0",
-      description: "Authentication and authorization API",
+      description: "Logistics API",
     },
     servers: [
       {

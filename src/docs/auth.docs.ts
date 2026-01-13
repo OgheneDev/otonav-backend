@@ -244,6 +244,19 @@
  *         message:
  *           type: string
  *           example: Error description
+ *   responses:
+ *     UnauthorizedError:
+ *       description: Authentication token is missing or invalid
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/ErrorResponse'
+ *     ForbiddenError:
+ *       description: User does not have permission to access this resource
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/ErrorResponse'
  */
 
 /**
@@ -252,6 +265,8 @@
  *   post:
  *     summary: Register a business owner
  *     tags: [Auth]
+ *     description: Public endpoint - No authentication required
+ *     security: []  # Explicitly empty array for public endpoints
  *     requestBody:
  *       required: true
  *       content:
@@ -299,6 +314,8 @@
  *   post:
  *     summary: Register a customer
  *     tags: [Auth]
+ *     description: Public endpoint - No authentication required
+ *     security: []  # Explicitly empty array for public endpoints
  *     requestBody:
  *       required: true
  *       content:
@@ -335,6 +352,8 @@
  *   post:
  *     summary: Login user
  *     tags: [Auth]
+ *     description: Public endpoint - No authentication required
+ *     security: []  # Explicitly empty array for public endpoints
  *     requestBody:
  *       required: true
  *       content:
@@ -367,6 +386,8 @@
  *   post:
  *     summary: Verify email with OTP
  *     tags: [Auth]
+ *     description: Public endpoint - No authentication required
+ *     security: []  # Explicitly empty array for public endpoints
  *     requestBody:
  *       required: true
  *       content:
@@ -401,6 +422,8 @@
  *   post:
  *     summary: Resend verification OTP
  *     tags: [Auth]
+ *     description: Public endpoint - No authentication required
+ *     security: []  # Explicitly empty array for public endpoints
  *     requestBody:
  *       required: true
  *       content:
@@ -435,6 +458,8 @@
  *   post:
  *     summary: Refresh access token
  *     tags: [Auth]
+ *     description: Public endpoint - Requires refresh token (sent via body or cookie)
+ *     security: []  # Explicitly empty array - uses refresh token instead of JWT
  *     requestBody:
  *       content:
  *         application/json:
@@ -463,11 +488,7 @@
  *                       type: integer
  *                       example: 604800
  *       401:
- *         description: Unauthorized
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *         $ref: '#/components/responses/UnauthorizedError'
  */
 
 /**
@@ -476,6 +497,8 @@
  *   post:
  *     summary: Request password reset OTP
  *     tags: [Auth]
+ *     description: Public endpoint - No authentication required
+ *     security: []  # Explicitly empty array for public endpoints
  *     requestBody:
  *       required: true
  *       content:
@@ -510,6 +533,8 @@
  *   post:
  *     summary: Reset password with OTP
  *     tags: [Auth]
+ *     description: Public endpoint - No authentication required
+ *     security: []  # Explicitly empty array for public endpoints
  *     requestBody:
  *       required: true
  *       content:
@@ -555,8 +580,9 @@
  *   post:
  *     summary: Logout user
  *     tags: [Auth]
+ *     description: Protected endpoint - Requires valid JWT token
  *     security:
- *       - bearerAuth: []
+ *       - bearerAuth: []  # Requires JWT token
  *     responses:
  *       200:
  *         description: Logged out successfully
@@ -577,11 +603,7 @@
  *               type: string
  *               example: refreshToken=; HttpOnly; Secure; SameSite=Strict; Max-Age=0
  *       401:
- *         description: Unauthorized
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *         $ref: '#/components/responses/UnauthorizedError'
  */
 
 /**
@@ -590,8 +612,9 @@
  *   get:
  *     summary: Get current user profile
  *     tags: [Auth]
+ *     description: Protected endpoint - Requires valid JWT token
  *     security:
- *       - bearerAuth: []
+ *       - bearerAuth: []  # Requires JWT token
  *     responses:
  *       200:
  *         description: User profile retrieved successfully
@@ -609,11 +632,7 @@
  *                 data:
  *                   $ref: '#/components/schemas/UserProfile'
  *       401:
- *         description: Unauthorized
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *         $ref: '#/components/responses/UnauthorizedError'
  */
 
 /**
@@ -622,8 +641,9 @@
  *   put:
  *     summary: Update user profile
  *     tags: [Auth]
+ *     description: Protected endpoint - Requires valid JWT token
  *     security:
- *       - bearerAuth: []
+ *       - bearerAuth: []  # Requires JWT token
  *     requestBody:
  *       required: true
  *       content:
@@ -666,7 +686,7 @@
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  *       401:
- *         description: Unauthorized
+ *         $ref: '#/components/responses/UnauthorizedError'
  */
 
 /**
@@ -675,8 +695,9 @@
  *   put:
  *     summary: Change password
  *     tags: [Auth]
+ *     description: Protected endpoint - Requires valid JWT token
  *     security:
- *       - bearerAuth: []
+ *       - bearerAuth: []  # Requires JWT token
  *     requestBody:
  *       required: true
  *       content:
@@ -715,7 +736,7 @@
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  *       401:
- *         description: Unauthorized
+ *         $ref: '#/components/responses/UnauthorizedError'
  */
 
 /**
@@ -724,8 +745,9 @@
  *   post:
  *     summary: Create a rider account (Owner only)
  *     tags: [Auth]
+ *     description: Protected endpoint - Requires owner role with valid JWT token
  *     security:
- *       - bearerAuth: []
+ *       - bearerAuth: []  # Requires JWT token
  *     requestBody:
  *       required: true
  *       content:
@@ -772,9 +794,9 @@
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  *       401:
- *         description: Unauthorized
+ *         $ref: '#/components/responses/UnauthorizedError'
  *       403:
- *         description: Forbidden - Only owners can create rider accounts
+ *         $ref: '#/components/responses/ForbiddenError'
  */
 
 /**
@@ -783,8 +805,9 @@
  *   post:
  *     summary: Complete rider registration (Rider only)
  *     tags: [Auth]
+ *     description: Protected endpoint - Requires rider role with valid JWT token
  *     security:
- *       - bearerAuth: []
+ *       - bearerAuth: []  # Requires JWT token
  *     requestBody:
  *       required: true
  *       content:
@@ -831,7 +854,7 @@
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  *       401:
- *         description: Unauthorized
+ *         $ref: '#/components/responses/UnauthorizedError'
  *       403:
- *         description: Forbidden - Only riders can complete registration
+ *         $ref: '#/components/responses/ForbiddenError'
  */
