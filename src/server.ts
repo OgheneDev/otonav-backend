@@ -14,33 +14,19 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// CORS configuration
-const allowedOrigins = [
-  "http://localhost:3000",
-  "http://localhost:3001",
-  process.env.FRONTEND_URL,
-].filter(Boolean) as string[];
-
-const corsOptions: cors.CorsOptions = {
-  origin: (
-    origin: string | undefined,
-    callback: (err: Error | null, allow?: boolean) => void
-  ) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  credentials: true,
+// Simple CORS - Allow all origins (for development)
+const corsOptions = {
+  origin: "*", // Allow all origins
+  credentials: true, // Allow cookies if needed
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
 };
+
+// Or even simpler - no options needed for basic CORS
+// app.use(cors());
 
 // Middleware
 app.use(helmet());
-app.use(cors(corsOptions));
+app.use(cors(corsOptions)); // Or just app.use(cors()) for default settings
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
@@ -60,7 +46,7 @@ app.get("/health", (req, res) => {
   });
 });
 
-// 404 handler - FIXED VERSION
+// 404 handler
 app.use((req, res, next) => {
   res.status(404).json({
     success: false,
