@@ -26,11 +26,27 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Simple CORS - Allow all origins (for development)
+// CORS - Allow specific origins for credentials
 const corsOptions = {
-  origin: "*", // Allow all origins
-  credentials: true, // Allow cookies if needed
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  origin: function (
+    origin: string | undefined,
+    callback: (err: Error | null, allow?: boolean) => void
+  ) {
+    // Allow requests with no origin (like mobile apps, Postman, curl)
+    if (!origin) return callback(null, true);
+
+    // List of allowed origins
+    const allowedOrigins = ["http://localhost:3000", "http://localhost:3001"];
+
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(null, true); // Allow all origins for now (development)
+    }
+  },
+  credentials: true, // Allow cookies
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+  allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
 };
 
 // Request timing and timeout logging middleware
