@@ -569,7 +569,7 @@ export const completeCustomerRegistrationViaTokenController = async (
   res: Response
 ) => {
   try {
-    const { token, password, name } = req.body;
+    const { token, password, name, phoneNumber } = req.body; // Add phoneNumber
 
     if (!token || !password) {
       return res.status(400).json({
@@ -588,6 +588,7 @@ export const completeCustomerRegistrationViaTokenController = async (
     const customer = await completeCustomerRegistrationViaToken(
       token,
       password,
+      phoneNumber, // Pass phoneNumber
       name
     );
 
@@ -600,6 +601,7 @@ export const completeCustomerRegistrationViaTokenController = async (
         role: customer.role,
         emailVerified: customer.emailVerified,
         registrationCompleted: customer.registrationCompleted,
+        phoneNumber: customer.phoneNumber, // Include in response
       },
       "Registration completed. Please check your email for OTP to verify your account."
     );
