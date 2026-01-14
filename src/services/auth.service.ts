@@ -505,9 +505,9 @@ export const registerBusiness = async (
           password: passwordHash,
           name,
           phoneNumber: phoneNumber,
-          role: "owner", // Global role
-          // Remove orgId from users table insertion
+          role: "owner",
           emailVerified: false,
+          registrationStatus: "pending",
           tokenVersion: 1,
         })
         .returning();
@@ -578,6 +578,7 @@ export const registerCustomer = async (
       phoneNumber: phoneNumber,
       role: "customer",
       emailVerified: false,
+      registrationStatus: "pending", // Add this line
       tokenVersion: 1,
     })
     .returning();
@@ -602,23 +603,9 @@ export const verifyEmailWithOTP = async (
   // Normalize email: trim whitespace and convert to lowercase
   const normalizedEmail = email.trim().toLowerCase();
 
-  console.log("=== Debug: Email Verification ===");
-  console.log("Original email:", email);
-  console.log("Normalized email:", normalizedEmail);
-  console.log("OTP received:", otp);
-
   const user = await db.query.users.findFirst({
     where: sql`LOWER(TRIM(${users.email})) = ${normalizedEmail}`,
   });
-
-  console.log("User found:", user ? "Yes" : "No");
-  if (user) {
-    console.log("User ID:", user.id);
-    console.log("Stored OTP:", user.otpCode);
-    console.log("OTP Type:", user.otpType);
-    console.log("OTP Expires:", user.otpExpires);
-    console.log("Email Verified:", user.emailVerified);
-  }
 
   if (!user) {
     throw new Error("User not found");
@@ -638,11 +625,12 @@ export const verifyEmailWithOTP = async (
     throw new Error("Invalid or expired OTP");
   }
 
-  // Update user - set emailVerified to true
+  // Update user - set emailVerified to true and registrationStatus to completed
   await db
     .update(users)
     .set({
       emailVerified: true,
+      registrationStatus: "completed",
       otpCode: null,
       otpExpires: null,
       otpType: null,
@@ -1368,12 +1356,11 @@ export const createCustomerAccount = async (
     throw new Error("Organization not found");
   }
 
-  // FIX: This logic needs updating - customers don't belong to orgs in user_organizations
-  // They're just regular users with role "customer"
+  // Check if user already exists and is verified
   if (
     existingUser &&
-    existingUser.role === "customer" &&
-    existingUser.emailVerified
+    existingUser.emailVerified &&
+    existingUser.role === "customer"
   ) {
     throw new Error("Customer already exists and is verified");
   }
@@ -1382,13 +1369,14 @@ export const createCustomerAccount = async (
     let customer;
     const token = generateRegistrationToken(
       customerEmail,
-      "",
+      "", // No orgId for customers
       "customer",
       customerName
     );
     const registrationLink = getRegistrationLink(token, "customer");
 
     if (existingUser && !existingUser.emailVerified) {
+      // Update existing unverified user
       [customer] = await tx
         .update(users)
         .set({
@@ -1396,10 +1384,12 @@ export const createCustomerAccount = async (
           role: "customer",
           registrationToken: token,
           registrationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          registrationStatus: "pending", // Add this line
         })
         .where(eq(users.id, existingUser.id))
         .returning();
     } else {
+      // Create new customer with pending status
       const tempPassword = `temp_${Math.random().toString(36).slice(2, 12)}`;
       const tempPasswordHash = await hashPassword(tempPassword);
 
@@ -1413,6 +1403,7 @@ export const createCustomerAccount = async (
           emailVerified: false,
           registrationToken: token,
           registrationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          registrationStatus: "pending", // Add this line
           tokenVersion: 1,
         })
         .returning();
@@ -1433,6 +1424,7 @@ export const createCustomerAccount = async (
         customerEmail,
         customerName: customerName || "Not provided",
         createdBy: ownerMembership.userId,
+        status: "pending",
       },
       timestamp: new Date(),
     });
@@ -1442,6 +1434,7 @@ export const createCustomerAccount = async (
       email: customer.email,
       name: customer.name,
       emailSent: true,
+      status: "pending", // Add this line
       token: token,
       registrationLink: registrationLink,
     };
@@ -1454,7 +1447,7 @@ export const createCustomerAccount = async (
 export const completeCustomerRegistrationViaToken = async (
   token: string,
   password: string,
-  phoneNumber?: string, // Add phoneNumber parameter
+  phoneNumber?: string,
   name?: string
 ) => {
   const user = await db.query.users.findFirst({
@@ -1494,10 +1487,11 @@ export const completeCustomerRegistrationViaToken = async (
 
   const updateData: any = {
     password: passwordHash,
-    phoneNumber: phoneNumber || null, // Add phone number
+    phoneNumber: phoneNumber || null,
     registrationCompleted: true,
     registrationToken: null,
     registrationTokenExpires: null,
+    registrationStatus: "completed", // Update status to completed
     otpCode: otp,
     otpExpires: otpExpires,
     otpType: "verify",
@@ -1532,7 +1526,8 @@ export const completeCustomerRegistrationViaToken = async (
     role: updatedUser.role,
     emailVerified: updatedUser.emailVerified,
     registrationCompleted: updatedUser.registrationCompleted,
-    phoneNumber: updatedUser.phoneNumber, // Return phone number
+    registrationStatus: updatedUser.registrationStatus, // Include status in response
+    phoneNumber: updatedUser.phoneNumber,
     otp: otp,
     token: accessToken,
   };
