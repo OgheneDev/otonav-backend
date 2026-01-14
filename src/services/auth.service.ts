@@ -751,7 +751,7 @@ export const getUserById = async (userId: string) => {
 };
 
 /**
- * Create Rider Account (Owner Action) - New version with registration/invitation links
+ * Create Rider Account (Owner Action) - UPDATED with pending status
  */
 export const createRiderAccount = async (
   ownerId: string,
@@ -763,7 +763,6 @@ export const createRiderAccount = async (
     where: eq(users.id, ownerId),
   });
 
-  // Check if owner belongs to the organization
   const ownerMembership = await db.query.userOrganizations.findFirst({
     where: and(
       eq(userOrganizations.userId, ownerId),
@@ -805,6 +804,10 @@ export const createRiderAccount = async (
       });
 
       if (existingMembership) {
+        // If they already have a pending invitation, resend it
+        if (existingMembership.registrationStatus === "pending") {
+          throw new Error("Rider already has a pending invitation");
+        }
         throw new Error("Rider already belongs to this organization");
       }
 
@@ -819,6 +822,19 @@ export const createRiderAccount = async (
         org.name,
         riderName
       );
+
+      // Create pending membership for existing user
+      await tx.insert(userOrganizations).values({
+        userId: existingUser.id,
+        orgId: orgId,
+        role: "rider",
+        isActive: false,
+        isSuspended: false,
+        registrationStatus: "pending",
+        invitedAt: new Date(),
+        invitationSentAt: new Date(),
+        joinedAt: null,
+      });
 
       await tx
         .update(users)
@@ -845,14 +861,28 @@ export const createRiderAccount = async (
           email: riderEmail,
           password: tempPasswordHash,
           name: riderName,
-          role: "rider", // Global role
+          role: "rider",
           emailVerified: false,
           registrationCompleted: false,
+          registrationStatus: "pending",
           registrationToken: token,
           registrationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
           tokenVersion: 1,
         })
         .returning();
+
+      // Create pending membership for new user
+      await tx.insert(userOrganizations).values({
+        userId: rider.id,
+        orgId: orgId,
+        role: "rider",
+        isActive: false,
+        isSuspended: false,
+        registrationStatus: "pending",
+        invitedAt: new Date(),
+        invitationSentAt: new Date(),
+        joinedAt: null,
+      });
 
       await sendRiderRegistrationLinkEmail(
         riderEmail,
@@ -872,6 +902,7 @@ export const createRiderAccount = async (
         riderEmail,
         riderName,
         emailType,
+        status: "pending",
         createdBy: owner.email,
       },
       timestamp: new Date(),
@@ -883,14 +914,16 @@ export const createRiderAccount = async (
       name: riderName,
       emailSent: true,
       emailType,
+      status: "pending",
       token: token,
       registrationLink: registrationLink || null,
       invitationLink: invitationLink || null,
     };
   });
 };
+
 /**
- * Complete Rider Registration via Token (Public)
+ * Complete Rider Registration via Token (Public) - UPDATED
  */
 export const completeRiderRegistrationViaToken = async (
   token: string,
@@ -905,20 +938,13 @@ export const completeRiderRegistrationViaToken = async (
     throw new Error("Token is required");
   }
 
-  // Clean the token - remove any query parameters appended to it
   let cleanToken = token;
-
-  // Check if token contains '&' (query parameters)
   if (token.includes("&")) {
-    // Split by '&' and take the first part (the actual JWT)
     cleanToken = token.split("&")[0];
     console.log("Cleaned token from URL params:", cleanToken);
-    console.log("Original had query params:", token.split("&").slice(1));
   }
 
-  // Also check if token starts with common prefixes
   if (cleanToken.includes("token=")) {
-    // Extract token from 'token=xxx' format
     const match = cleanToken.match(/token=([^&]+)/);
     if (match) {
       cleanToken = match[1];
@@ -926,7 +952,6 @@ export const completeRiderRegistrationViaToken = async (
     }
   }
 
-  // Decode the JWT token first to get the email
   let payload;
   try {
     const decoded = jwt.decode(cleanToken) as any;
@@ -946,7 +971,6 @@ export const completeRiderRegistrationViaToken = async (
     throw new Error(`Invalid token: ${error.message}`);
   }
 
-  // Validate token type and role
   if (payload.type !== "registration") {
     throw new Error(
       `Invalid token type. Expected "registration", got "${payload.type}"`
@@ -959,7 +983,6 @@ export const completeRiderRegistrationViaToken = async (
 
   const { email, orgId } = payload;
 
-  // Find user
   const user = await db.query.users.findFirst({
     where: eq(users.email, email),
   });
@@ -978,6 +1001,7 @@ export const completeRiderRegistrationViaToken = async (
       password: passwordHash,
       phoneNumber: phoneNumber || null,
       registrationCompleted: true,
+      registrationStatus: "completed",
       registrationToken: null,
       registrationTokenExpires: null,
       otpCode: otp,
@@ -987,15 +1011,20 @@ export const completeRiderRegistrationViaToken = async (
     .where(eq(users.id, user.id))
     .returning();
 
-  // ADD USER TO USER_ORGANIZATIONS
-  await db.insert(userOrganizations).values({
-    userId: updatedUser.id,
-    orgId: orgId,
-    role: "rider",
-    isActive: true,
-    isSuspended: false,
-    joinedAt: new Date(),
-  });
+  // Update user_organizations to mark as completed and active
+  await db
+    .update(userOrganizations)
+    .set({
+      isActive: true,
+      registrationStatus: "completed",
+      joinedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(userOrganizations.userId, updatedUser.id),
+        eq(userOrganizations.orgId, orgId)
+      )
+    );
 
   await sendVerificationOTPEmail(user.email, otp, updatedUser.name || "");
 
@@ -1006,6 +1035,7 @@ export const completeRiderRegistrationViaToken = async (
     severity: "info",
     details: {
       viaToken: true,
+      status: "completed",
       completedAt: new Date().toISOString(),
     },
     timestamp: new Date(),
@@ -1018,12 +1048,13 @@ export const completeRiderRegistrationViaToken = async (
     role: updatedUser.role,
     emailVerified: updatedUser.emailVerified,
     registrationCompleted: updatedUser.registrationCompleted,
+    registrationStatus: updatedUser.registrationStatus,
     otp: otp,
   };
 };
 
 /**
- * Accept Invitation (Public)
+ * Accept Invitation (Public) - UPDATED
  */
 export const acceptInvitation = async (token: string) => {
   let payload;
@@ -1051,7 +1082,6 @@ export const acceptInvitation = async (token: string) => {
     throw new Error("Invalid invitation token or token expired");
   }
 
-  // Check if user already belongs to this organization
   const existingMembership = await db.query.userOrganizations.findFirst({
     where: and(
       eq(userOrganizations.userId, user.id),
@@ -1060,7 +1090,35 @@ export const acceptInvitation = async (token: string) => {
   });
 
   if (existingMembership) {
-    throw new Error("User already belongs to this organization");
+    if (existingMembership.registrationStatus === "pending") {
+      // Update pending invitation to completed
+      await db
+        .update(userOrganizations)
+        .set({
+          isActive: true,
+          registrationStatus: "completed",
+          joinedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(userOrganizations.userId, user.id),
+            eq(userOrganizations.orgId, orgId)
+          )
+        );
+    } else {
+      throw new Error("User already belongs to this organization");
+    }
+  } else {
+    // Create new membership
+    await db.insert(userOrganizations).values({
+      userId: user.id,
+      orgId: orgId,
+      role: "rider",
+      isActive: true,
+      isSuspended: false,
+      registrationStatus: "completed",
+      joinedAt: new Date(),
+    });
   }
 
   const [updatedUser] = await db
@@ -1071,16 +1129,6 @@ export const acceptInvitation = async (token: string) => {
     })
     .where(eq(users.id, user.id))
     .returning();
-
-  // ADD USER TO USER_ORGANIZATIONS
-  await db.insert(userOrganizations).values({
-    userId: updatedUser.id,
-    orgId: orgId,
-    role: "rider",
-    isActive: true,
-    isSuspended: false,
-    joinedAt: new Date(),
-  });
 
   const org = await db.query.organizations.findFirst({
     where: eq(organizations.id, orgId),
@@ -1102,6 +1150,187 @@ export const acceptInvitation = async (token: string) => {
     email: updatedUser.email,
     name: updatedUser.name,
     role: updatedUser.role,
+  };
+};
+
+/**
+ * Resend Rider Invitation
+ */
+export const resendRiderInvitation = async (
+  ownerId: string,
+  orgId: string,
+  riderId: string
+) => {
+  const owner = await db.query.users.findFirst({
+    where: eq(users.id, ownerId),
+  });
+
+  const ownerMembership = await db.query.userOrganizations.findFirst({
+    where: and(
+      eq(userOrganizations.userId, ownerId),
+      eq(userOrganizations.orgId, orgId),
+      eq(userOrganizations.role, "owner")
+    ),
+  });
+
+  if (!owner || !ownerMembership) {
+    throw new Error("Unauthorized");
+  }
+
+  const rider = await db.query.users.findFirst({
+    where: eq(users.id, riderId),
+  });
+
+  if (!rider) {
+    throw new Error("Rider not found");
+  }
+
+  const membership = await db.query.userOrganizations.findFirst({
+    where: and(
+      eq(userOrganizations.userId, riderId),
+      eq(userOrganizations.orgId, orgId),
+      eq(userOrganizations.registrationStatus, "pending")
+    ),
+  });
+
+  if (!membership) {
+    throw new Error("No pending invitation found");
+  }
+
+  const org = await db.query.organizations.findFirst({
+    where: eq(organizations.id, orgId),
+  });
+
+  let token;
+  let emailType;
+
+  if (rider.registrationCompleted) {
+    // Existing user - resend invitation
+    token = generateInvitationToken(rider.email, orgId, "rider");
+    emailType = "invitation";
+    await sendRiderInvitationEmail(
+      rider.email,
+      getInvitationLink(token),
+      org!.name,
+      rider.name || rider.email
+    );
+
+    await db
+      .update(users)
+      .set({
+        invitationToken: token,
+        invitationTokenExpires: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      })
+      .where(eq(users.id, riderId));
+  } else {
+    // New user - resend registration link
+    token = generateRegistrationToken(rider.email, orgId, "rider");
+    emailType = "registration";
+    await sendRiderRegistrationLinkEmail(
+      rider.email,
+      getRegistrationLink(token, "rider"),
+      org!.name,
+      rider.name || rider.email
+    );
+
+    await db
+      .update(users)
+      .set({
+        registrationToken: token,
+        registrationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      })
+      .where(eq(users.id, riderId));
+  }
+
+  // Update invitation sent timestamp
+  await db
+    .update(userOrganizations)
+    .set({
+      invitationSentAt: new Date(),
+    })
+    .where(
+      and(
+        eq(userOrganizations.userId, riderId),
+        eq(userOrganizations.orgId, orgId)
+      )
+    );
+
+  return {
+    success: true,
+    message: `Invitation resent to ${rider.email}`,
+    emailType,
+  };
+};
+
+/**
+ * Cancel Rider Invitation
+ */
+export const cancelRiderInvitation = async (
+  ownerId: string,
+  orgId: string,
+  riderId: string
+) => {
+  const owner = await db.query.users.findFirst({
+    where: eq(users.id, ownerId),
+  });
+
+  const ownerMembership = await db.query.userOrganizations.findFirst({
+    where: and(
+      eq(userOrganizations.userId, ownerId),
+      eq(userOrganizations.orgId, orgId),
+      eq(userOrganizations.role, "owner")
+    ),
+  });
+
+  if (!owner || !ownerMembership) {
+    throw new Error("Unauthorized");
+  }
+
+  const membership = await db.query.userOrganizations.findFirst({
+    where: and(
+      eq(userOrganizations.userId, riderId),
+      eq(userOrganizations.orgId, orgId),
+      eq(userOrganizations.registrationStatus, "pending")
+    ),
+  });
+
+  if (!membership) {
+    throw new Error("No pending invitation found");
+  }
+
+  // Remove from user_organizations
+  await db
+    .delete(userOrganizations)
+    .where(
+      and(
+        eq(userOrganizations.userId, riderId),
+        eq(userOrganizations.orgId, orgId)
+      )
+    );
+
+  const rider = await db.query.users.findFirst({
+    where: and(
+      eq(users.id, riderId),
+      eq(users.registrationCompleted, false),
+      eq(users.emailVerified, false)
+    ),
+  });
+
+  if (rider) {
+    // Check if user has any other organization memberships
+    const otherMemberships = await db.query.userOrganizations.findMany({
+      where: eq(userOrganizations.userId, riderId),
+    });
+
+    if (otherMemberships.length === 0) {
+      // Delete user if no other memberships
+      await db.delete(users).where(eq(users.id, riderId));
+    }
+  }
+
+  return {
+    success: true,
+    message: "Invitation cancelled successfully",
   };
 };
 

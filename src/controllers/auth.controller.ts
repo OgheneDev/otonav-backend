@@ -18,6 +18,8 @@ import {
   updateUserPassword,
   initiatePasswordReset,
   resendVerificationOTP,
+  cancelRiderInvitation,
+  resendRiderInvitation,
 } from "../services/auth.service.js";
 
 // Helper functions
@@ -508,6 +510,74 @@ export const acceptInvitationController = async (
       },
       "Invitation accepted successfully. You are now part of the organization."
     );
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+/**
+ * Resend Rider Invitation
+ */
+export const resendRiderInvitationController = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const userId = (req as any).user?.userId;
+    const orgId = (req as any).user?.orgId;
+    const { riderId } = req.body;
+
+    if (!userId || !orgId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    if (!riderId) {
+      return res.status(400).json({
+        success: false,
+        message: "Rider ID is required",
+      });
+    }
+
+    const result = await resendRiderInvitation(userId, orgId, riderId);
+
+    return successResponse(res, result, result.message);
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+/**
+ * Cancel Rider Invitation
+ */
+export const cancelRiderInvitationController = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const userId = (req as any).user?.userId;
+    const orgId = (req as any).user?.orgId;
+    const { riderId } = req.body;
+
+    if (!userId || !orgId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    if (!riderId) {
+      return res.status(400).json({
+        success: false,
+        message: "Rider ID is required",
+      });
+    }
+
+    const result = await cancelRiderInvitation(userId, orgId, riderId);
+
+    return successResponse(res, result, result.message);
   } catch (error) {
     return handleError(res, error);
   }
