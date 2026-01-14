@@ -25,18 +25,18 @@
  *         email:
  *           type: string
  *           format: email
- *           example: owner@company.com
+ *           example: "owner@company.com"
  *         password:
  *           type: string
  *           format: password
  *           minLength: 6
- *           example: password123
+ *           example: "password123"
  *         name:
  *           type: string
- *           example: John Doe
+ *           example: "John Doe"
  *         businessName:
  *           type: string
- *           example: Acme Logistics
+ *           example: "Acme Logistics"
  *         phoneNumber:
  *           type: string
  *           example: "+1234567890"
@@ -52,15 +52,15 @@
  *         email:
  *           type: string
  *           format: email
- *           example: customer@email.com
+ *           example: "customer@email.com"
  *         password:
  *           type: string
  *           format: password
  *           minLength: 6
- *           example: password123
+ *           example: "password123"
  *         name:
  *           type: string
- *           example: Jane Smith
+ *           example: "Jane Smith"
  *         phoneNumber:
  *           type: string
  *           example: "+1234567890"
@@ -75,11 +75,11 @@
  *         email:
  *           type: string
  *           format: email
- *           example: user@example.com
+ *           example: "user@example.com"
  *         password:
  *           type: string
  *           format: password
- *           example: password123
+ *           example: "password123"
  *
  *     # Organization-based Schemas
  *     CreateRider:
@@ -91,10 +91,10 @@
  *         riderEmail:
  *           type: string
  *           format: email
- *           example: rider@company.com
+ *           example: "rider@company.com"
  *         riderName:
  *           type: string
- *           example: Mike Johnson
+ *           example: "Mike Johnson"
  *
  *     CreateCustomer:
  *       type: object
@@ -104,10 +104,10 @@
  *         customerEmail:
  *           type: string
  *           format: email
- *           example: customer@company.com
+ *           example: "customer@company.com"
  *         customerName:
  *           type: string
- *           example: Sarah Wilson
+ *           example: "Sarah Wilson"
  *           nullable: true
  *
  *     # Token-based Registration Schemas
@@ -126,7 +126,7 @@
  *           type: string
  *           format: password
  *           minLength: 6
- *           example: newpassword123
+ *           example: "newpassword123"
  *         phoneNumber:
  *           type: string
  *           example: "+1234567890"
@@ -145,10 +145,10 @@
  *           type: string
  *           format: password
  *           minLength: 6
- *           example: newpassword123
+ *           example: "newpassword123"
  *         name:
  *           type: string
- *           example: Sarah Wilson
+ *           example: "Sarah Wilson"
  *           nullable: true
  *
  *     AcceptInvitation:
@@ -171,10 +171,10 @@
  *         email:
  *           type: string
  *           format: email
- *           example: user@example.com
+ *           example: "user@example.com"
  *         otp:
  *           type: string
- *           example: 123456
+ *           example: "123456"
  *
  *     ResendOTP:
  *       type: object
@@ -184,7 +184,7 @@
  *         email:
  *           type: string
  *           format: email
- *           example: user@example.com
+ *           example: "user@example.com"
  *
  *     UpdateProfile:
  *       type: object
@@ -192,22 +192,23 @@
  *         name:
  *           type: string
  *           nullable: true
- *           example: John Smith
+ *           example: "John Smith"
  *         email:
  *           type: string
  *           format: email
- *           example: newemail@example.com
+ *           example: "newemail@example.com"
  *         phoneNumber:
  *           type: string
  *           example: "+1234567890"
- *          nullable: true
- *        locationLabel:
+ *           nullable: true
+ *         locationLabel:
  *           type: string
  *           nullable: true
+ *           example: "Downtown Office"
  *         preciseLocation:
  *           type: string
  *           nullable: true
- *
+ *           example: "123 Main St, City, Country"
  *
  *     ChangePassword:
  *       type: object
@@ -218,12 +219,12 @@
  *         currentPassword:
  *           type: string
  *           format: password
- *           example: oldpassword123
+ *           example: "oldpassword123"
  *         newPassword:
  *           type: string
  *           format: password
  *           minLength: 6
- *           example: newpassword456
+ *           example: "newpassword456"
  *
  *     ForgotPassword:
  *       type: object
@@ -233,7 +234,7 @@
  *         email:
  *           type: string
  *           format: email
- *           example: user@example.com
+ *           example: "user@example.com"
  *
  *     ResetPassword:
  *       type: object
@@ -245,15 +246,15 @@
  *         email:
  *           type: string
  *           format: email
- *           example: user@example.com
+ *           example: "user@example.com"
  *         otp:
  *           type: string
- *           example: 654321
+ *           example: "654321"
  *         newPassword:
  *           type: string
  *           format: password
  *           minLength: 6
- *           example: newsecurepassword
+ *           example: "newsecurepassword"
  *
  *     RefreshToken:
  *       type: object
@@ -282,6 +283,12 @@
  *         registrationCompleted:
  *           type: boolean
  *         phoneNumber:
+ *           type: string
+ *           nullable: true
+ *         locationLabel:
+ *           type: string
+ *           nullable: true
+ *         preciseLocation:
  *           type: string
  *           nullable: true
  *         createdAt:
@@ -315,7 +322,7 @@
  *           example: true
  *         message:
  *           type: string
- *           example: Login successful
+ *           example: "Login successful"
  *         data:
  *           type: object
  *           properties:
@@ -332,12 +339,18 @@
  *                   type: string
  *                 role:
  *                   type: string
- *                   example: owner
+ *                   example: "owner"
  *                 emailVerified:
  *                   type: boolean
  *                 registrationCompleted:
  *                   type: boolean
  *                 phoneNumber:
+ *                   type: string
+ *                   nullable: true
+ *                 locationLabel:
+ *                   type: string
+ *                   nullable: true
+ *                 preciseLocation:
  *                   type: string
  *                   nullable: true
  *                 organizations:
@@ -369,7 +382,7 @@
  *           example: true
  *         message:
  *           type: string
- *           example: Business registration successful
+ *           example: "Business registration successful"
  *         data:
  *           type: object
  *           properties:
@@ -386,7 +399,7 @@
  *                   type: string
  *                 role:
  *                   type: string
- *                   example: owner
+ *                   example: "owner"
  *                 emailVerified:
  *                   type: boolean
  *                 otp:
@@ -409,7 +422,7 @@
  *           example: true
  *         message:
  *           type: string
- *           example: Rider invitation sent successfully
+ *           example: "Rider invitation sent successfully"
  *         data:
  *           type: object
  *           properties:
@@ -439,7 +452,7 @@
  *           example: false
  *         message:
  *           type: string
- *           example: Error description
+ *           example: "Error description"
  *
  *   responses:
  *     UnauthorizedError:
@@ -548,7 +561,7 @@
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: Customer registration successful. Please check your email for OTP to verify your account.
+ *                   example: "Customer registration successful. Please check your email for OTP to verify your account."
  *                 data:
  *                   type: object
  *                   properties:
@@ -562,7 +575,7 @@
  *                       type: string
  *                     role:
  *                       type: string
- *                       example: customer
+ *                       example: "customer"
  *                     emailVerified:
  *                       type: boolean
  *                     otp:
@@ -607,7 +620,7 @@
  *           Set-Cookie:
  *             schema:
  *               type: string
- *               example: refreshToken=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...; HttpOnly; Secure; SameSite=Strict; Max-Age=2592000
+ *               example: "refreshToken=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...; HttpOnly; Secure; SameSite=Strict; Max-Age=2592000"
  *       400:
  *         description: Bad request
  *         content:
@@ -643,7 +656,7 @@
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: Email verified successfully. You can now login.
+ *                   example: "Email verified successfully. You can now login."
  *       400:
  *         description: Bad request
  *         content:
@@ -679,7 +692,7 @@
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: New OTP sent to your email.
+ *                   example: "New OTP sent to your email."
  *       400:
  *         description: Bad request
  *         content:
@@ -716,7 +729,7 @@
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: Token refreshed successfully
+ *                   example: "Token refreshed successfully"
  *                 data:
  *                   type: object
  *                   properties:
@@ -756,7 +769,7 @@
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: If an account exists with this email, you will receive a password reset OTP.
+ *                   example: "If an account exists with this email, you will receive a password reset OTP."
  *       400:
  *         description: Bad request
  *         content:
@@ -792,7 +805,7 @@
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: Password reset successful. You can now login with your new password.
+ *                   example: "Password reset successful. You can now login with your new password."
  *                 data:
  *                   type: object
  *                   properties:
@@ -834,12 +847,12 @@
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: Logged out successfully
+ *                   example: "Logged out successfully"
  *         headers:
  *           Set-Cookie:
  *             schema:
  *               type: string
- *               example: refreshToken=; HttpOnly; Secure; SameSite=Strict; Max-Age=0
+ *               example: "refreshToken=; HttpOnly; Secure; SameSite=Strict; Max-Age=0"
  *       401:
  *         $ref: '#/components/responses/UnauthorizedError'
  */
@@ -868,7 +881,7 @@
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: Profile retrieved successfully
+ *                   example: "Profile retrieved successfully"
  *                 data:
  *                   $ref: '#/components/schemas/UserProfile'
  *       401:
@@ -903,6 +916,7 @@
  *                   example: true
  *                 message:
  *                   type: string
+ *                   example: "Profile updated successfully"
  *                 data:
  *                   type: object
  *                   properties:
@@ -965,7 +979,7 @@
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: Password updated successfully
+ *                   example: "Password updated successfully"
  *                 data:
  *                   type: object
  *                   properties:
@@ -1090,7 +1104,7 @@
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: Registration completed. Please check your email for OTP to verify your account.
+ *                   example: "Registration completed. Please check your email for OTP to verify your account."
  *                 data:
  *                   type: object
  *                   properties:
@@ -1104,7 +1118,7 @@
  *                       type: string
  *                     role:
  *                       type: string
- *                       example: rider
+ *                       example: "rider"
  *                     emailVerified:
  *                       type: boolean
  *                     registrationCompleted:
@@ -1158,7 +1172,7 @@
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: Invitation accepted successfully. You are now part of the organization.
+ *                   example: "Invitation accepted successfully. You are now part of the organization."
  *                 data:
  *                   type: object
  *                   properties:
@@ -1172,7 +1186,7 @@
  *                       type: string
  *                     role:
  *                       type: string
- *                       example: rider
+ *                       example: "rider"
  *       400:
  *         description: Bad request
  *         content:
@@ -1225,7 +1239,7 @@
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: Customer registration link sent successfully
+ *                   example: "Customer registration link sent successfully"
  *                 data:
  *                   type: object
  *                   properties:
@@ -1300,7 +1314,7 @@
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: Registration completed. Please check your email for OTP to verify your account.
+ *                   example: "Registration completed. Please check your email for OTP to verify your account."
  *                 data:
  *                   type: object
  *                   properties:
@@ -1314,7 +1328,7 @@
  *                       type: string
  *                     role:
  *                       type: string
- *                       example: customer
+ *                       example: "customer"
  *                     emailVerified:
  *                       type: boolean
  *                     registrationCompleted:
