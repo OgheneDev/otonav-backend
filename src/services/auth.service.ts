@@ -1345,7 +1345,13 @@ export const logoutUser = async (userId: string) => {
  */
 export const updateUserProfile = async (
   userId: string,
-  updates: { name?: string | null; email?: string; phoneNumber?: string }
+  updates: {
+    name?: string | null;
+    email?: string;
+    phoneNumber?: string;
+    locationLabel?: string | null;
+    preciseLocation?: string | null;
+  }
 ) => {
   const updateData: any = {};
 
@@ -1356,13 +1362,22 @@ export const updateUserProfile = async (
   if (updates.phoneNumber !== undefined) {
     // Validate phone number format (optional)
     if (updates.phoneNumber && updates.phoneNumber.trim() !== "") {
-      // Basic phone validation - adjust as needed
       const phoneRegex = /^[+]?[0-9\s\-\(\)]{10,}$/;
       if (!phoneRegex.test(updates.phoneNumber)) {
         throw new Error("Invalid phone number format");
       }
     }
     updateData.phoneNumber = updates.phoneNumber || null;
+  }
+
+  // Handle locationLabel
+  if (updates.locationLabel !== undefined) {
+    updateData.locationLabel = updates.locationLabel || null;
+  }
+
+  // Handle preciseLocation
+  if (updates.preciseLocation !== undefined) {
+    updateData.preciseLocation = updates.preciseLocation || null;
   }
 
   if (updates.email) {

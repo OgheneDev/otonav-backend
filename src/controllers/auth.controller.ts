@@ -332,8 +332,14 @@ export const updateProfileController = async (req: Request, res: Response) => {
       });
     }
 
-    // Validate that only allowed fields are being updated
-    const allowedFields = ["name", "email", "phoneNumber"];
+    // Update allowed fields to include the new location fields
+    const allowedFields = [
+      "name",
+      "email",
+      "phoneNumber",
+      "locationLabel",
+      "preciseLocation",
+    ];
     const invalidFields = Object.keys(updates).filter(
       (field) => !allowedFields.includes(field)
     );
@@ -356,6 +362,8 @@ export const updateProfileController = async (req: Request, res: Response) => {
         email: updatedUser.email,
         name: updatedUser.name,
         phoneNumber: updatedUser.phoneNumber,
+        locationLabel: updatedUser.locationLabel,
+        preciseLocation: updatedUser.preciseLocation,
         role: updatedUser.role,
         emailVerified: updatedUser.emailVerified,
       },
