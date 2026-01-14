@@ -80,13 +80,15 @@ export const verifyToken = <T = TokenPayload>(token: string): T => {
 const generateRegistrationToken = (
   email: string,
   orgId: string = "", // Make orgId optional with a default value
-  role: string
+  role: string,
+  name?: string // Add name parameter
 ): string => {
   if (role === "customer") {
     // Customers don't belong to specific orgs, so don't include orgId
     return jwt.sign(
       {
         email,
+        name, // Include name in the token
         role,
         type: "registration",
       },
@@ -103,6 +105,7 @@ const generateRegistrationToken = (
   return jwt.sign(
     {
       email,
+      name, // Include name for riders too
       orgId,
       role,
       type: "registration",
@@ -1139,7 +1142,12 @@ export const createCustomerAccount = async (
 
   return await db.transaction(async (tx) => {
     let customer;
-    const token = generateRegistrationToken(customerEmail, "", "customer");
+    const token = generateRegistrationToken(
+      customerEmail,
+      "",
+      "customer",
+      customerName
+    );
     const registrationLink = getRegistrationLink(token, "customer");
 
     if (existingUser && !existingUser.emailVerified) {
@@ -1208,6 +1216,7 @@ export const createCustomerAccount = async (
 export const completeCustomerRegistrationViaToken = async (
   token: string,
   password: string,
+  phoneNumber?: string, // Add phoneNumber parameter
   name?: string
 ) => {
   const user = await db.query.users.findFirst({
@@ -1247,6 +1256,7 @@ export const completeCustomerRegistrationViaToken = async (
 
   const updateData: any = {
     password: passwordHash,
+    phoneNumber: phoneNumber || null, // Add phone number
     registrationCompleted: true,
     registrationToken: null,
     registrationTokenExpires: null,
@@ -1255,8 +1265,11 @@ export const completeCustomerRegistrationViaToken = async (
     otpType: "verify",
   };
 
+  // Use the name from the token if not provided in the form
   if (name) {
     updateData.name = name;
+  } else if (payload.name) {
+    updateData.name = payload.name;
   }
 
   const [updatedUser] = await db
@@ -1267,11 +1280,10 @@ export const completeCustomerRegistrationViaToken = async (
 
   await sendVerificationOTPEmail(user.email, otp, updatedUser.name || "");
 
-  // FIX: Generate token without orgId
+  // Generate access token for immediate login
   const accessToken = generateAccessToken({
     userId: updatedUser.id,
     email: updatedUser.email,
-    // REMOVED: orgId: updatedUser.orgId, (field no longer exists)
     role: updatedUser.role,
   });
 
@@ -1282,6 +1294,7 @@ export const completeCustomerRegistrationViaToken = async (
     role: updatedUser.role,
     emailVerified: updatedUser.emailVerified,
     registrationCompleted: updatedUser.registrationCompleted,
+    phoneNumber: updatedUser.phoneNumber, // Return phone number
     otp: otp,
     token: accessToken,
   };
