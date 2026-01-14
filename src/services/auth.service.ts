@@ -624,10 +624,13 @@ export const verifyEmailWithOTP = async (
     throw new Error("User not found");
   }
 
+  // FIXED: If already verified, just return true without requiring OTP
   if (user.emailVerified) {
+    console.log("Email already verified, returning success");
     return true;
   }
 
+  // Verify OTP
   if (
     !verifyOTP(otp, user.otpCode || "", user.otpExpires || new Date()) ||
     user.otpType !== "verify"
@@ -635,6 +638,7 @@ export const verifyEmailWithOTP = async (
     throw new Error("Invalid or expired OTP");
   }
 
+  // Update user - set emailVerified to true
   await db
     .update(users)
     .set({
@@ -645,6 +649,7 @@ export const verifyEmailWithOTP = async (
     })
     .where(eq(users.id, user.id));
 
+  console.log("Email verified successfully for user:", user.id);
   return true;
 };
 
@@ -652,14 +657,18 @@ export const verifyEmailWithOTP = async (
  * Authenticate User (Login)
  */
 export const authenticateUser = async (email: string, password: string) => {
+  // FIXED: Normalize email for consistency
+  const normalizedEmail = email.trim().toLowerCase();
+
   const user = await db.query.users.findFirst({
-    where: eq(users.email, email),
+    where: sql`LOWER(TRIM(${users.email})) = ${normalizedEmail}`,
   });
 
   if (!user || !(await comparePassword(password, user.password))) {
     throw new Error("Invalid credentials");
   }
 
+  // FIXED: Check emailVerified status after fetching user
   if (!user.emailVerified) {
     const otp = generateOTP();
     await storeOTP(user.id, otp, "verify");
@@ -695,9 +704,9 @@ export const authenticateUser = async (email: string, password: string) => {
   const accessToken = generateAccessToken({
     userId: user.id,
     email: user.email,
-    orgId: defaultOrgId, // Can be null for users with multiple/no organizations
+    orgId: defaultOrgId,
     role: defaultRole,
-    organizations: userOrgs, // Include all organizations in token
+    organizations: userOrgs,
   });
 
   const refreshToken = generateRefreshToken({
@@ -1553,8 +1562,11 @@ export const initiatePasswordReset = async (email: string) => {
  * Resend Verification OTP
  */
 export const resendVerificationOTP = async (email: string) => {
+  // FIXED: Normalize email for consistency
+  const normalizedEmail = email.trim().toLowerCase();
+
   const user = await db.query.users.findFirst({
-    where: eq(users.email, email),
+    where: sql`LOWER(TRIM(${users.email})) = ${normalizedEmail}`,
   });
 
   if (!user) {
@@ -1569,5 +1581,6 @@ export const resendVerificationOTP = async (email: string) => {
   await storeOTP(user.id, otp, "verify");
   await sendVerificationOTPEmail(email, otp, user.name || "");
 
+  console.log("New OTP sent for user:", user.id);
   return true;
 };
