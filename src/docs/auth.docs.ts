@@ -200,7 +200,14 @@
  *         phoneNumber:
  *           type: string
  *           example: "+1234567890"
+ *          nullable: true
+ *        locationLabel:
+ *           type: string
  *           nullable: true
+ *         preciseLocation:
+ *           type: string
+ *           nullable: true
+ *
  *
  *     ChangePassword:
  *       type: object
