@@ -910,6 +910,12 @@
  *                     phoneNumber:
  *                       type: string
  *                       nullable: true
+ *                     locationLabel:
+ *                       type: string
+ *                       nullable: true
+ *                     preciseLocation:
+ *                       type: string
+ *                       nullable: true
  *                     role:
  *                       type: string
  *                     emailVerified:

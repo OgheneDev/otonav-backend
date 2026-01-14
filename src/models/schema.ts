@@ -70,6 +70,10 @@ export const users = pgTable("users", {
   password: text("password").notNull(),
   name: text("name"),
 
+  // Add these new location fields
+  locationLabel: text("location_label"), // e.g., "Downtown", "Main Street"
+  preciseLocation: text("precise_location"), // e.g., coordinates or address
+
   // Global user type (default role)
   role: userRoleEnum("role").default("customer").notNull(),
 
