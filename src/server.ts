@@ -37,7 +37,11 @@ const corsOptions = {
     if (!origin) return callback(null, true);
 
     // List of allowed origins
-    const allowedOrigins = ["http://localhost:3000", "http://localhost:3001"];
+    const allowedOrigins = [
+      "http://localhost:3000",
+      "http://localhost:3001",
+      "https://otonav.vercel.app",
+    ];
 
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
