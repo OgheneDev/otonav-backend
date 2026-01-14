@@ -1,5 +1,5 @@
-// services/rider.service.ts
-import { eq, and, ne, isNull, desc, inArray } from "drizzle-orm";
+// services/rider.service.ts - FIXED VERSION
+import { eq, and, desc, inArray } from "drizzle-orm";
 import { db } from "../config/database.js";
 import {
   users,
@@ -10,6 +10,13 @@ import {
 import { sendEmail } from "./email.service.js";
 import { createAuditLog } from "./audit.service.js";
 
+// Define a union type for registration status
+export type RegistrationStatus =
+  | "pending"
+  | "completed"
+  | "cancelled"
+  | "expired";
+
 export interface Rider {
   id: string;
   email: string;
@@ -19,7 +26,8 @@ export interface Rider {
   emailVerified: boolean;
   lastLoginAt: Date | null;
   createdAt: Date;
-  registrationCompleted: boolean | null; // Changed from boolean to boolean | null
+  registrationCompleted: boolean | null;
+  registrationStatus: RegistrationStatus | null; // Can be null
 
   // Organization-specific information
   orgMembership: {
@@ -28,9 +36,12 @@ export interface Rider {
     role: string;
     isActive: boolean;
     isSuspended: boolean;
+    registrationStatus: RegistrationStatus | null; // Can be null
+    invitedAt: Date | null;
+    invitationSentAt: Date | null;
+    joinedAt: Date | null;
     suspensionReason?: string;
     suspensionExpires?: Date;
-    joinedAt: Date;
   };
 }
 
@@ -42,14 +53,23 @@ export interface UpdateRiderStatusInput {
 
 export class RiderService {
   /**
-   * Get all riders in an organization
+   * Get all riders in an organization including pending ones
    */
   async getRidersByOrganization(
     orgId: string,
-    includeSuspended: boolean = false
+    includeSuspended: boolean = false,
+    includePending: boolean = true
   ): Promise<Rider[]> {
     try {
-      // Get user organization memberships
+      const whereConditions = [
+        eq(userOrganizations.orgId, orgId),
+        eq(userOrganizations.role, "rider"),
+      ];
+
+      if (!includeSuspended) {
+        whereConditions.push(eq(userOrganizations.isSuspended, false));
+      }
+
       const memberships = await db
         .select({
           userId: userOrganizations.userId,
@@ -57,26 +77,20 @@ export class RiderService {
           role: userOrganizations.role,
           isActive: userOrganizations.isActive,
           isSuspended: userOrganizations.isSuspended,
+          registrationStatus: userOrganizations.registrationStatus,
+          invitedAt: userOrganizations.invitedAt,
+          invitationSentAt: userOrganizations.invitationSentAt,
+          joinedAt: userOrganizations.joinedAt,
           suspensionReason: userOrganizations.suspensionReason,
           suspensionExpires: userOrganizations.suspensionExpires,
-          joinedAt: userOrganizations.joinedAt,
           orgName: organizations.name,
         })
         .from(userOrganizations)
         .innerJoin(organizations, eq(userOrganizations.orgId, organizations.id))
         .innerJoin(users, eq(userOrganizations.userId, users.id))
-        .where(
-          and(
-            eq(userOrganizations.orgId, orgId),
-            eq(userOrganizations.role, "rider"),
-            includeSuspended
-              ? undefined
-              : eq(userOrganizations.isSuspended, false)
-          )
-        )
-        .orderBy(desc(userOrganizations.joinedAt));
+        .where(and(...whereConditions))
+        .orderBy(desc(userOrganizations.invitedAt));
 
-      // Get user details for all members
       const userIds = memberships.map((m) => m.userId);
       const userList = await db
         .select({
@@ -89,32 +103,44 @@ export class RiderService {
           lastLoginAt: users.lastLoginAt,
           createdAt: users.createdAt,
           registrationCompleted: users.registrationCompleted,
+          registrationStatus: users.registrationStatus,
         })
         .from(users)
         .where(inArray(users.id, userIds));
 
-      // Create a map of users
       const userMap = new Map(userList.map((user) => [user.id, user]));
 
-      // Combine user details with organization membership
       const riders: Rider[] = memberships
         .filter((membership) => userMap.has(membership.userId))
         .map((membership) => {
           const user = userMap.get(membership.userId)!;
           return {
             ...user,
+            registrationStatus:
+              user.registrationStatus as RegistrationStatus | null,
             orgMembership: {
               orgId: membership.orgId,
               orgName: membership.orgName,
               role: membership.role,
               isActive: membership.isActive,
               isSuspended: membership.isSuspended,
+              registrationStatus:
+                membership.registrationStatus as RegistrationStatus | null,
+              invitedAt: membership.invitedAt,
+              invitationSentAt: membership.invitationSentAt,
+              joinedAt: membership.joinedAt,
               suspensionReason: membership.suspensionReason || undefined,
               suspensionExpires: membership.suspensionExpires || undefined,
-              joinedAt: membership.joinedAt,
             },
           };
         });
+
+      // Filter out pending riders if requested
+      if (!includePending) {
+        return riders.filter(
+          (rider) => rider.orgMembership.registrationStatus !== "pending"
+        );
+      }
 
       return riders;
     } catch (error) {
@@ -135,9 +161,12 @@ export class RiderService {
           role: userOrganizations.role,
           isActive: userOrganizations.isActive,
           isSuspended: userOrganizations.isSuspended,
+          registrationStatus: userOrganizations.registrationStatus,
+          invitedAt: userOrganizations.invitedAt,
+          invitationSentAt: userOrganizations.invitationSentAt,
+          joinedAt: userOrganizations.joinedAt,
           suspensionReason: userOrganizations.suspensionReason,
           suspensionExpires: userOrganizations.suspensionExpires,
-          joinedAt: userOrganizations.joinedAt,
           orgName: organizations.name,
         })
         .from(userOrganizations)
@@ -164,6 +193,7 @@ export class RiderService {
           lastLoginAt: users.lastLoginAt,
           createdAt: users.createdAt,
           registrationCompleted: users.registrationCompleted,
+          registrationStatus: users.registrationStatus,
         })
         .from(users)
         .where(eq(users.id, riderId))
@@ -173,20 +203,50 @@ export class RiderService {
 
       return {
         ...user,
+        registrationStatus:
+          user.registrationStatus as RegistrationStatus | null,
         orgMembership: {
           orgId: membership.orgId,
           orgName: membership.orgName,
           role: membership.role,
           isActive: membership.isActive,
           isSuspended: membership.isSuspended,
+          registrationStatus:
+            membership.registrationStatus as RegistrationStatus | null,
+          invitedAt: membership.invitedAt,
+          invitationSentAt: membership.invitationSentAt,
+          joinedAt: membership.joinedAt,
           suspensionReason: membership.suspensionReason || undefined,
           suspensionExpires: membership.suspensionExpires || undefined,
-          joinedAt: membership.joinedAt,
         },
       };
     } catch (error) {
       console.error("Error fetching rider:", error);
       throw new Error("Failed to fetch rider");
+    }
+  }
+
+  /**
+   * Check if a rider invitation is still pending
+   */
+  async isInvitationPending(riderId: string, orgId: string): Promise<boolean> {
+    try {
+      const [membership] = await db
+        .select({ registrationStatus: userOrganizations.registrationStatus })
+        .from(userOrganizations)
+        .where(
+          and(
+            eq(userOrganizations.userId, riderId),
+            eq(userOrganizations.orgId, orgId),
+            eq(userOrganizations.role, "rider")
+          )
+        )
+        .limit(1);
+
+      return membership?.registrationStatus === "pending";
+    } catch (error) {
+      console.error("Error checking invitation status:", error);
+      return false;
     }
   }
 
@@ -315,7 +375,7 @@ export class RiderService {
   }
 
   /**
-   * Remove a rider from a specific organization (hard deletion from user_organizations)
+   * Remove a rider from organization (handles pending riders differently)
    */
   async removeRiderFromOrganization(
     riderId: string,
@@ -324,21 +384,12 @@ export class RiderService {
     data: UpdateRiderStatusInput = {}
   ): Promise<{ success: boolean; message: string; removedFromOrg: boolean }> {
     try {
-      // First, verify the rider exists and belongs to the organization
       const rider = await this.getRiderById(riderId, orgId);
       if (!rider) {
         throw new Error("Rider not found in this organization");
       }
 
-      // Check if this is the rider's only organization
-      const orgMemberships = await db
-        .select({ orgId: userOrganizations.orgId })
-        .from(userOrganizations)
-        .where(eq(userOrganizations.userId, riderId));
-
-      const hasOtherOrganizations = orgMemberships.some(
-        (m) => m.orgId !== orgId
-      );
+      const isPending = rider.orgMembership.registrationStatus === "pending";
 
       // Remove from user_organizations table
       await db
@@ -350,32 +401,114 @@ export class RiderService {
           )
         );
 
-      // Send removal email
-      await this.sendRemovalEmail(rider, data.reason);
+      // Send different email for pending vs active riders
+      if (isPending) {
+        await this.sendInvitationCancelledEmail(rider, data.reason);
+      } else {
+        await this.sendRemovalEmail(rider, data.reason);
+      }
 
       // Create audit log
       await createAuditLog({
         orgId,
         userId: actorUserId,
-        action: "rider.removed",
+        action: isPending ? "rider.invitation_cancelled" : "rider.removed",
         resourceType: "user",
         resourceId: riderId,
         details: {
           reason: data.reason,
           notes: data.notes,
-          hadOtherOrganizations: hasOtherOrganizations,
+          wasPending: isPending,
         },
         severity: "warning",
       });
 
       return {
         success: true,
-        message: "Rider successfully removed from organization",
+        message: isPending
+          ? "Invitation cancelled successfully"
+          : "Rider successfully removed from organization",
         removedFromOrg: true,
       };
     } catch (error) {
       console.error("Error removing rider:", error);
       throw error;
+    }
+  }
+
+  /**
+   * Send invitation cancelled email
+   */
+  private async sendInvitationCancelledEmail(
+    rider: Rider,
+    reason?: string
+  ): Promise<void> {
+    try {
+      const emailData = {
+        riderName: rider.name || rider.email,
+        organizationName: rider.orgMembership.orgName,
+        cancellationDate: new Date().toLocaleDateString(),
+        reason: reason || "Invitation cancelled by organization",
+        contactEmail: process.env.SUPPORT_EMAIL || "support@example.com",
+      };
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                .header { background-color: #f8f9fa; padding: 20px; text-align: center; }
+                .content { padding: 20px; background-color: #fff; }
+                .footer { text-align: center; padding: 20px; font-size: 12px; color: #666; }
+                .notice { background-color: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 4px; margin: 20px 0; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h2>Invitation Cancelled - ${emailData.organizationName}</h2>
+                </div>
+                <div class="content">
+                    <p>Dear ${emailData.riderName},</p>
+                    
+                    <div class="notice">
+                        <p><strong>Your invitation to join ${emailData.organizationName} has been cancelled.</strong></p>
+                    </div>
+                    
+                    <p><strong>Details:</strong></p>
+                    <ul>
+                        <li><strong>Organization:</strong> ${emailData.organizationName}</li>
+                        <li><strong>Cancellation Date:</strong> ${emailData.cancellationDate}</li>
+                        <li><strong>Reason:</strong> ${emailData.reason}</li>
+                    </ul>
+                    
+                    <p>This means you will no longer be able to complete registration for ${emailData.organizationName}.</p>
+                    
+                    <p>If you believe this cancellation is in error, please contact 
+                    <a href="mailto:${emailData.contactEmail}">${emailData.contactEmail}</a>.</p>
+                    
+                    <p>Best regards,<br>
+                    The ${emailData.organizationName} Team</p>
+                </div>
+                <div class="footer">
+                    <p>This is an automated message. Please do not reply to this email.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+      `;
+
+      await sendEmail({
+        to: rider.email,
+        subject: `Invitation Cancelled - ${emailData.organizationName}`,
+        html,
+      });
+
+      console.log(`Invitation cancelled email sent to ${rider.email}`);
+    } catch (error) {
+      console.error("Error sending invitation cancelled email:", error);
     }
   }
 
@@ -587,7 +720,7 @@ export class RiderService {
       role: string;
       isActive: boolean;
       isSuspended: boolean;
-      joinedAt: Date;
+      joinedAt: Date | null; // Updated to allow null
     }>
   > {
     try {

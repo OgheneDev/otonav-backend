@@ -18,6 +18,8 @@ import {
   updatePasswordController,
   forgotPasswordController,
   resetPasswordController,
+  resendRiderInvitationController,
+  cancelRiderInvitationController,
 } from "../controllers/auth.controller.js";
 import {
   authenticateToken,
@@ -75,6 +77,23 @@ router.post(
   requireOrgMember, // NEW: Ensure user belongs to org
   requireOrgOwner, // NEW: More specific than authorizeRole(["owner"])
   createCustomerAccountController
+);
+
+router.post(
+  "/rider/resend-invitation",
+  authenticateToken,
+  requireOrgContext, // NEW: Ensure org context exists
+  requireOrgMember, // NEW: Ensure user belongs to org
+  requireOrgOwner, // NEW: More specific than authorizeRole(["owner"])
+  resendRiderInvitationController
+);
+router.post(
+  "/rider/cancel-invitation",
+  authenticateToken,
+  requireOrgContext, // NEW: Ensure org context exists
+  requireOrgMember, // NEW: Ensure user belongs to org
+  requireOrgOwner, // NEW: More specific than authorizeRole(["owner"])
+  cancelRiderInvitationController
 );
 
 export const authRoutes = router;

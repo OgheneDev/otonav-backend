@@ -20,10 +20,11 @@ export class RiderController {
         });
       }
 
-      const { includeSuspended, includeInactive } = req.query;
+      const { includeSuspended, includeInactive, includePending } = req.query;
       const riders = await riderService.getRidersByOrganization(
         user.orgId,
-        includeSuspended === "true"
+        includeSuspended === "true",
+        includePending !== "false" // Default to true if not specified
       );
 
       // Filter out inactive riders if not specifically requested
