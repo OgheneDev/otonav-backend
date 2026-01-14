@@ -147,7 +147,7 @@ const getInvitationLink = (token: string): string => {
 // --- OTP Management ---
 
 /**
- * Store OTP - ENHANCED VERSION with better error handling
+ * Store OTP - WITH IMMEDIATE VERIFICATION
  */
 const storeOTP = async (
   userId: string,
@@ -158,8 +158,11 @@ const storeOTP = async (
   const otpExpires = getOTPExpiration();
   const client = dbClient || db;
 
-  console.log(`Storing OTP for user ${userId}, type: ${otpType}`);
+  console.log(`📝 Storing OTP for user ${userId}, type: ${otpType}`);
+  console.log(`   OTP value: ${otp}`);
+  console.log(`   OTP expires: ${otpExpires}`);
 
+  // Update with explicit RETURNING to ensure we get what was written
   const result = await client
     .update(users)
     .set({
@@ -177,22 +180,49 @@ const storeOTP = async (
     });
 
   if (!result || result.length === 0) {
+    console.log(`❌ No user found with ID: ${userId}`);
     throw new Error(`No user found with ID: ${userId}`);
   }
 
-  console.log(`OTP stored successfully for user ${userId}`);
+  console.log(`✅ OTP stored, returned data:`, {
+    otpCode: result[0].otpCode,
+    otpExpires: result[0].otpExpires,
+    otpType: result[0].otpType,
+  });
 
-  // Verify the OTP was actually stored
+  // CRITICAL: Verify the OTP was actually stored correctly
   if (result[0].otpCode !== otp) {
-    console.error("OTP mismatch after storage!", {
+    console.error("❌ OTP MISMATCH after storage!", {
       expected: otp,
       actual: result[0].otpCode,
     });
     throw new Error("Failed to store OTP correctly");
   }
 
+  // ADDITIONAL VERIFICATION: Read back from database to confirm
+  const verification = await client.query.users.findFirst({
+    where: eq(users.id, userId),
+    columns: {
+      otpCode: true,
+      otpExpires: true,
+      otpType: true,
+    },
+  });
+
+  console.log(`🔍 Verification read-back:`, verification);
+
+  if (verification?.otpCode !== otp) {
+    console.error("❌ OTP VERIFICATION FAILED on read-back!", {
+      expected: otp,
+      readBack: verification?.otpCode,
+    });
+    throw new Error("OTP storage verification failed");
+  }
+
+  console.log(`✅ OTP storage verified successfully`);
   return result[0];
 };
+
 // --- Email Templates ---
 const sendVerificationOTPEmail = async (
   email: string,
@@ -616,68 +646,117 @@ export const registerCustomer = async (
 };
 
 /**
- * Verify Email with OTP - FIXED VERSION
+ * Verify Email with OTP - WITH FRESH DATABASE READ
  */
 export const verifyEmailWithOTP = async (
   email: string,
   otp: string
 ): Promise<boolean> => {
-  // Normalize email: trim whitespace and convert to lowercase
+  console.log("=== VERIFY EMAIL OTP ===");
+  console.log("Timestamp:", new Date().toISOString());
+  console.log("Email:", email);
+  console.log("Input OTP:", otp);
+
+  // Normalize email
   const normalizedEmail = email.trim().toLowerCase();
 
-  const user = await db.query.users.findFirst({
-    where: sql`LOWER(TRIM(${users.email})) = ${normalizedEmail}`,
-  });
+  // Normalize OTP input
+  const normalizedOTP = otp.trim();
+  console.log("Normalized OTP:", normalizedOTP);
 
-  if (!user) {
-    throw new Error("User not found");
-  }
+  // CRITICAL: Force a fresh read from the database
+  // Use a transaction to ensure we get the most recent data
+  return await db.transaction(async (tx) => {
+    const user = await tx.query.users.findFirst({
+      where: sql`LOWER(TRIM(${users.email})) = ${normalizedEmail}`,
+    });
 
-  // If already verified, clear any remaining OTP and return true
-  if (user.emailVerified) {
-    console.log("Email already verified, clearing any remaining OTP");
-    await db
+    if (!user) {
+      console.log("❌ User not found");
+      throw new Error("User not found");
+    }
+
+    console.log("✅ User found:", user.id);
+    console.log("Database state:");
+    console.log("  - emailVerified:", user.emailVerified);
+    console.log("  - otpCode:", user.otpCode);
+    console.log("  - otpType:", user.otpType);
+    console.log("  - otpExpires:", user.otpExpires);
+    console.log("  - Current time:", new Date());
+
+    // If already verified, clear OTP and return
+    if (user.emailVerified) {
+      console.log("✅ Email already verified");
+      await tx
+        .update(users)
+        .set({
+          otpCode: null,
+          otpExpires: null,
+          otpType: null,
+        })
+        .where(eq(users.id, user.id));
+      return true;
+    }
+
+    // Validate OTP fields exist
+    if (!user.otpCode || !user.otpExpires || !user.otpType) {
+      console.log("❌ Missing OTP fields");
+      throw new Error("No OTP found. Please request a new verification code.");
+    }
+
+    // Check OTP type
+    if (user.otpType !== "verify") {
+      console.log("❌ Wrong OTP type:", user.otpType);
+      throw new Error(
+        "Invalid OTP type. This OTP is not for email verification."
+      );
+    }
+
+    // Check expiration first
+    const now = new Date();
+    const expiresAt = new Date(user.otpExpires);
+    const isExpired = now > expiresAt;
+
+    console.log("Time check:");
+    console.log("  - Now:", now.toISOString());
+    console.log("  - Expires:", expiresAt.toISOString());
+    console.log("  - Is expired:", isExpired);
+
+    if (isExpired) {
+      console.log("❌ OTP expired");
+      throw new Error("OTP has expired. Please request a new one.");
+    }
+
+    // Check OTP match
+    const otpMatch = normalizedOTP === user.otpCode.trim();
+    console.log("OTP comparison:");
+    console.log("  - Input:", normalizedOTP);
+    console.log("  - Stored:", user.otpCode.trim());
+    console.log("  - Match:", otpMatch);
+
+    if (!otpMatch) {
+      console.log("❌ OTP does not match");
+      throw new Error("Invalid OTP code.");
+    }
+
+    console.log("✅ OTP verified, updating user...");
+
+    // Update user to verified
+    await tx
       .update(users)
       .set({
+        emailVerified: true,
+        registrationStatus: "completed",
         otpCode: null,
         otpExpires: null,
         otpType: null,
       })
       .where(eq(users.id, user.id));
+
+    console.log("✅ Email verified successfully");
+    console.log("=== END VERIFY ===");
     return true;
-  }
-
-  // Check if OTP fields exist
-  if (!user.otpCode || !user.otpExpires || !user.otpType) {
-    throw new Error("No OTP found. Please request a new verification code.");
-  }
-
-  // Verify OTP type first
-  if (user.otpType !== "verify") {
-    throw new Error(
-      "Invalid OTP type. This OTP is not for email verification."
-    );
-  }
-
-  // Verify OTP
-  if (!verifyOTP(otp, user.otpCode, user.otpExpires)) {
-    throw new Error("Invalid or expired OTP");
-  }
-
-  // Update user - set emailVerified to true and registrationStatus to completed
-  await db
-    .update(users)
-    .set({
-      emailVerified: true,
-      registrationStatus: "completed",
-      otpCode: null,
-      otpExpires: null,
-      otpType: null,
-    })
-    .where(eq(users.id, user.id));
-
-  console.log("Email verified successfully for user:", user.id);
-  return true;
+  });
 };
 
 /**
@@ -1822,38 +1901,62 @@ export const initiatePasswordReset = async (email: string) => {
 };
 
 /**
- * Resend Verification OTP - FIXED VERSION
+ * Resend Verification OTP - WITH EXPLICIT FLUSH
  */
 export const resendVerificationOTP = async (email: string) => {
+  console.log("=== RESEND VERIFICATION OTP ===");
+  console.log("Timestamp:", new Date().toISOString());
+  console.log("Email:", email);
+
   // Normalize email for consistency
   const normalizedEmail = email.trim().toLowerCase();
 
-  const user = await db.query.users.findFirst({
-    where: sql`LOWER(TRIM(${users.email})) = ${normalizedEmail}`,
-  });
+  // Use a transaction to ensure consistency
+  return await db
+    .transaction(async (tx) => {
+      const user = await tx.query.users.findFirst({
+        where: sql`LOWER(TRIM(${users.email})) = ${normalizedEmail}`,
+      });
 
-  if (!user) {
-    throw new Error("User not found");
-  }
+      if (!user) {
+        console.log("❌ User not found");
+        throw new Error("User not found");
+      }
 
-  if (user.emailVerified) {
-    throw new Error("Email already verified");
-  }
+      console.log("✅ User found:", user.id);
+      console.log("Current emailVerified:", user.emailVerified);
 
-  const otp = generateOTP();
+      if (user.emailVerified) {
+        console.log("❌ Email already verified");
+        throw new Error("Email already verified");
+      }
 
-  // Use storeOTP which handles the update
-  await storeOTP(user.id, otp, "verify");
+      const otp = generateOTP();
+      console.log("Generated OTP:", otp);
 
-  // Send email after DB update to ensure OTP is stored
-  await sendVerificationOTPEmail(email, otp, user.name || "");
+      // Store OTP within the transaction
+      await storeOTP(user.id, otp, "verify", tx);
 
-  console.log("New OTP sent and stored for user:", user.id);
+      // Send email AFTER transaction commits (moved outside)
+      // Store email details to send after transaction
+      return {
+        userId: user.id,
+        email: user.email,
+        name: user.name,
+        otp: otp,
+      };
+    })
+    .then(async (data) => {
+      // Send email after transaction is committed
+      await sendVerificationOTPEmail(data.email, data.otp, data.name || "");
 
-  return {
-    success: true,
-    message: "Verification code sent successfully",
-    // Only include OTP in development for testing
-    ...(process.env.NODE_ENV === "development" && { otp }),
-  };
+      console.log("✅ OTP sent for user:", data.userId);
+      console.log("=== END RESEND ===");
+
+      return {
+        success: true,
+        message: "Verification code sent successfully",
+        ...(process.env.NODE_ENV === "development" && { otp: data.otp }),
+      };
+    });
 };
