@@ -7,18 +7,19 @@ export interface EmailOptions {
   text?: string;
 }
 
-// Create transporter (reuse this, don't create new ones each time)
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.elasticemail.com",
+  port: 2525, // Railway-friendly port
+  secure: false, // Use STARTTLS
   auth: {
-    user: process.env.GMAIL_USER, // Your Gmail address
-    pass: process.env.GMAIL_APP_PASSWORD, // App password from step 1
+    user: process.env.ELASTIC_EMAIL_USER, // Your Elastic Email username
+    pass: process.env.ELASTIC_EMAIL_PASSWORD, // SMTP password from dashboard
   },
 });
 
 export const sendEmail = async (options: EmailOptions): Promise<void> => {
-  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
-    console.warn("⚠️ Gmail credentials not configured");
+  if (!process.env.ELASTIC_EMAIL_USER || !process.env.ELASTIC_EMAIL_PASSWORD) {
+    console.warn("⚠️ Elastic Email credentials not configured");
     return;
   }
 
@@ -27,7 +28,9 @@ export const sendEmail = async (options: EmailOptions): Promise<void> => {
     const startTime = Date.now();
 
     const info = await transporter.sendMail({
-      from: `"Your App" <${process.env.GMAIL_USER}>`, // Your Gmail
+      from:
+        process.env.ELASTIC_EMAIL_FROM ||
+        `"Your App" <${process.env.ELASTIC_EMAIL_USER}>`,
       to: options.to,
       subject: options.subject,
       html: options.html,
