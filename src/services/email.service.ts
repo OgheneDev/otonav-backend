@@ -1,4 +1,13 @@
-import nodemailer from "nodemailer";
+import sgMail from "@sendgrid/mail";
+
+const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
+const EMAIL_FROM = process.env.EMAIL_FROM || "emmanueloghene72@gmail.com";
+
+if (SENDGRID_API_KEY) {
+  sgMail.setApiKey(SENDGRID_API_KEY);
+} else {
+  console.warn("⚠️ SENDGRID_API_KEY not configured");
+}
 
 export interface EmailOptions {
   to: string;
@@ -7,41 +16,72 @@ export interface EmailOptions {
   text?: string;
 }
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.elasticemail.com",
-  port: 2525, // Railway-friendly port
-  secure: false, // Use STARTTLS
-  auth: {
-    user: process.env.ELASTIC_EMAIL_USER, // Your Elastic Email username
-    pass: process.env.ELASTIC_EMAIL_PASSWORD, // SMTP password from dashboard
-  },
-});
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const sendEmail = async (options: EmailOptions): Promise<void> => {
-  if (!process.env.ELASTIC_EMAIL_USER || !process.env.ELASTIC_EMAIL_PASSWORD) {
-    console.warn("⚠️ Elastic Email credentials not configured");
+  if (!SENDGRID_API_KEY) {
+    console.warn("📧 SendGrid not configured, email not sent");
     return;
   }
 
-  try {
-    console.log(`📧 Sending email to ${options.to}...`);
-    const startTime = Date.now();
+  const maxRetries = 3;
+  let lastError: any;
 
-    const info = await transporter.sendMail({
-      from:
-        process.env.ELASTIC_EMAIL_FROM ||
-        `"Your App" <${process.env.ELASTIC_EMAIL_USER}>`,
-      to: options.to,
-      subject: options.subject,
-      html: options.html,
-      text: options.text || options.html.replace(/<[^>]*>/g, ""),
-    });
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`📧 [${attempt}/${maxRetries}] Sending to ${options.to}...`);
 
-    const duration = Date.now() - startTime;
-    console.log(`✅ Email sent successfully to ${options.to} in ${duration}ms`);
-    console.log(`📬 Message ID: ${info.messageId}`);
-  } catch (error: any) {
-    console.error("❌ Failed to send email:", error);
-    throw new Error(`Failed to send email: ${error.message}`);
+      const msg = {
+        to: options.to,
+        from: EMAIL_FROM,
+        subject: options.subject,
+        html: options.html,
+        text: options.text || options.html.replace(/<[^>]*>/g, ""),
+      };
+
+      // Add timeout to the request
+      const sendPromise = sgMail.send(msg);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Request timeout after 10s")), 10000)
+      );
+
+      const response = (await Promise.race([
+        sendPromise,
+        timeoutPromise,
+      ])) as any;
+
+      console.log(`✅ Email sent to ${options.to}`);
+      return; // Success!
+    } catch (error: any) {
+      lastError = error;
+      console.error(`❌ [${attempt}/${maxRetries}] Failed:`, error.message);
+
+      if (error.response) {
+        console.error("SendGrid error:", {
+          status: error.response.statusCode,
+          body: error.response.body,
+        });
+
+        // Don't retry on client errors (400-499)
+        if (
+          error.response.statusCode >= 400 &&
+          error.response.statusCode < 500
+        ) {
+          throw new Error(
+            `SendGrid error: ${JSON.stringify(error.response.body)}`
+          );
+        }
+      }
+
+      // Wait before retry (exponential backoff)
+      if (attempt < maxRetries) {
+        const delay = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s
+        console.log(`⏳ Retrying in ${delay}ms...`);
+        await sleep(delay);
+      }
+    }
   }
+
+  // All retries failed
+  throw new Error(`Failed after ${maxRetries} attempts: ${lastError?.message}`);
 };
