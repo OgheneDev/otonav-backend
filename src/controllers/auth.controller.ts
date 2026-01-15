@@ -313,7 +313,7 @@ export const getProfileController = async (req: Request, res: Response) => {
 };
 
 /**
- * Update User Profile
+ * Update User Profile Controller
  */
 export const updateProfileController = async (req: Request, res: Response) => {
   try {
@@ -334,14 +334,17 @@ export const updateProfileController = async (req: Request, res: Response) => {
       });
     }
 
-    // Update allowed fields to include the new location fields
+    // Update allowed fields to include location operations
     const allowedFields = [
       "name",
       "email",
       "phoneNumber",
-      "locationLabel",
-      "preciseLocation",
+      "locations", // Replace all locations
+      "addLocation", // Add a new location
+      "removeLocation", // Remove a location by index or label
+      "updateLocation", // Update a location by index
     ];
+
     const invalidFields = Object.keys(updates).filter(
       (field) => !allowedFields.includes(field)
     );
@@ -355,6 +358,32 @@ export const updateProfileController = async (req: Request, res: Response) => {
       });
     }
 
+    // Validate location operations
+    if (updates.locations && !Array.isArray(updates.locations)) {
+      return res.status(400).json({
+        success: false,
+        message: "Locations must be an array",
+      });
+    }
+
+    if (updates.addLocation) {
+      if (!updates.addLocation.label || !updates.addLocation.preciseLocation) {
+        return res.status(400).json({
+          success: false,
+          message: "addLocation must contain label and preciseLocation",
+        });
+      }
+    }
+
+    if (updates.updateLocation) {
+      if (typeof updates.updateLocation.index !== "number") {
+        return res.status(400).json({
+          success: false,
+          message: "updateLocation must contain an index",
+        });
+      }
+    }
+
     const updatedUser = await updateUserProfile(userId, updates);
 
     return successResponse(
@@ -364,8 +393,8 @@ export const updateProfileController = async (req: Request, res: Response) => {
         email: updatedUser.email,
         name: updatedUser.name,
         phoneNumber: updatedUser.phoneNumber,
-        locationLabel: updatedUser.locationLabel,
-        preciseLocation: updatedUser.preciseLocation,
+        locations: updatedUser.locations, // Return the locations array
+        currentLocation: updatedUser.currentLocation, // For riders
         role: updatedUser.role,
         emailVerified: updatedUser.emailVerified,
       },
