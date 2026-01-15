@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 import { authRoutes } from "./routes/auth.routes.js";
 import { riderRoutes } from "./routes/rider.routes.js";
 import { customerRoutes } from "./routes/customer.routes.js";
+import { orderRoutes } from "./routes/order.routes.js";
 //import { devRouter } from "./routes/dev.routes.js";
 import { errorHandler } from "./middleware/error.middleware.js";
 import dotenv from "dotenv";
@@ -99,6 +100,7 @@ app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use("/api/auth", authRoutes);
 app.use("/api/riders", riderRoutes);
 app.use("/api/customers", customerRoutes);
+app.use("/api/orders", orderRoutes);
 //app.use("/dev", devRouter);
 
 // Health check

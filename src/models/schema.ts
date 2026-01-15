@@ -32,6 +32,16 @@ export const auditSeverityEnum = pgEnum("audit_severity", [
   "critical",
 ]);
 
+export const orderStatusEnum = pgEnum("order_status", [
+  "pending",
+  "assigned",
+  "rider_accepted",
+  "customer_location_set",
+  "in_transit",
+  "delivered",
+  "cancelled",
+]);
+
 // 1. Organizations (Tenants)
 export const organizations = pgTable("organizations", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -171,4 +181,49 @@ export const auditLogs = pgTable("audit_logs", {
   userAgent: text("user_agent"),
   severity: auditSeverityEnum("severity").default("info").notNull(),
   timestamp: timestamp("timestamp").defaultNow().notNull(),
+});
+
+// 5. Orders table
+export const orders = pgTable("orders", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orderNumber: text("order_number").unique().notNull(),
+  orgId: uuid("org_id")
+    .references(() => organizations.id, { onDelete: "cascade" })
+    .notNull(),
+
+  // ONLY package description as requested
+  packageDescription: text("package_description").notNull(),
+
+  // Assignment details
+  customerId: uuid("customer_id")
+    .references(() => users.id, { onDelete: "set null" })
+    .notNull(),
+  riderId: uuid("rider_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+
+  // Location information
+  riderCurrentLocation: text("rider_current_location"), // Set when rider accepts
+  customerLocationLabel: text("customer_location_label"), // Only the label from customer's saved locations
+  customerLocationPrecise: text("customer_location_precise"), // The precise location
+
+  // Status tracking
+  status: orderStatusEnum("status").default("pending").notNull(),
+
+  // Timestamps
+  assignedAt: timestamp("assigned_at"),
+  riderAcceptedAt: timestamp("rider_accepted_at"),
+  customerLocationSetAt: timestamp("customer_location_set_at"),
+  deliveryStartAt: timestamp("delivery_start_at"),
+  deliveredAt: timestamp("delivered_at"),
+  cancelledAt: timestamp("cancelled_at"),
+
+  // Cancellation details (minimal)
+  cancelledBy: uuid("cancelled_by").references(() => users.id),
+  cancellationReason: text("cancellation_reason"),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date()),
 });
