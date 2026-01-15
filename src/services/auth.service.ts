@@ -779,9 +779,7 @@ export const authenticateUser = async (email: string, password: string) => {
     const otp = generateOTP();
     await storeOTP(user.id, otp, "verify");
     await sendVerificationOTPEmail(email, otp, user.name || "");
-    throw new Error(
-      `Please verify your email. A new OTP has been sent. OTP for testing: ${otp}`
-    );
+    throw new Error(`Please verify your email. A new OTP has been sent.`);
   }
 
   // Get user's organizations

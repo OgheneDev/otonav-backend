@@ -78,26 +78,28 @@ export const userOrganizations = pgTable("user_organizations", {
     .$onUpdate(() => new Date()),
 });
 
-// UPDATED: users table
+// FIXED: users table with consistent defaults
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: text("email").notNull().unique(),
   password: text("password").notNull(),
   name: text("name"),
 
-  // Add these new location fields
+  // Location fields
   locationLabel: text("location_label"),
   preciseLocation: text("precise_location"),
 
   // Global user type (default role)
   role: userRoleEnum("role").default("customer").notNull(),
 
-  // Registration status - UPDATED
-  registrationStatus: registrationStatusEnum("registration_status").default(
-    "completed"
-  ),
+  // CRITICAL FIX: Registration status should default to "pending" not "completed"
+  // This aligns with emailVerified defaulting to false
+  registrationStatus: registrationStatusEnum("registration_status")
+    .default("pending")
+    .notNull(),
 
   // Security & Auth State
+  // CRITICAL: emailVerified must NOT be null and defaults to false
   emailVerified: boolean("email_verified").default(false).notNull(),
   verificationToken: text("verification_token"),
   tokenVersion: integer("token_version").default(1).notNull(),
@@ -123,8 +125,10 @@ export const users = pgTable("users", {
   // Phone number
   phoneNumber: text("phone_number"),
 
-  // Registration completion flag
-  registrationCompleted: boolean("registration_completed").default(false),
+  // CRITICAL FIX: Registration completion flag should default to false
+  registrationCompleted: boolean("registration_completed")
+    .default(false)
+    .notNull(),
 
   // Metadata
   lastLoginAt: timestamp("last_login_at"),
