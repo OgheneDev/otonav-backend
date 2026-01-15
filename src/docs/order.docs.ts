@@ -304,7 +304,7 @@
 
 /**
  * @swagger
- * /orders/{orderId}:
+ * /api/orders/{orderId}:
  *   get:
  *     tags: [Orders]
  *     summary: Get single order by ID
@@ -355,7 +355,7 @@
 
 /**
  * @swagger
- * /orders/{orderId}/cancel:
+ * /api/orders/{orderId}/cancel:
  *   delete:
  *     tags: [Orders]
  *     summary: Cancel an order
@@ -411,7 +411,7 @@
 
 /**
  * @swagger
- * /orders/{orderId}/accept:
+ * /api/orders/{orderId}/accept:
  *   post:
  *     tags: [Orders]
  *     summary: Rider accept order
@@ -477,7 +477,7 @@
 
 /**
  * @swagger
- * /orders/{orderId}/set-location:
+ * /api/orders/{orderId}/set-location:
  *   post:
  *     tags: [Orders]
  *     summary: Customer set delivery location
@@ -534,7 +534,7 @@
 
 /**
  * @swagger
- * /orders/{orderId}/set-customer-location:
+ * /api/orders/{orderId}/set-customer-location:
  *   post:
  *     tags: [Orders]
  *     summary: Owner set customer location
@@ -594,7 +594,7 @@
 
 /**
  * @swagger
- * /orders/{orderId}/customer-location-labels:
+ * /api/orders/{orderId}/customer-location-labels:
  *   get:
  *     tags: [Orders]
  *     summary: Get customer's saved location labels
