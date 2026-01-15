@@ -94,56 +94,7 @@ export class OrderService {
     });
   }
 
-  async getOrderById(
-    orderId: string,
-    userId: string,
-    userRole: string,
-    orgId?: string // Optional for customers
-  ) {
-    let conditions: any[] = [eq(orders.id, orderId)];
-
-    if (userRole === "customer") {
-      // Customers can only see their own orders
-      conditions.push(eq(orders.customerId, userId));
-    } else if (userRole === "rider") {
-      // Riders need org context
-      if (!orgId) throw new Error("Organization context required for riders");
-      conditions.push(eq(orders.orgId, orgId));
-      conditions.push(eq(orders.riderId, userId));
-    } else {
-      // Owners need org context
-      if (!orgId) throw new Error("Organization context required for owners");
-      conditions.push(eq(orders.orgId, orgId));
-    }
-
-    const order = await db.query.orders.findFirst({
-      where: and(...conditions),
-      with: {
-        customer: {
-          columns: {
-            id: true,
-            email: true,
-            name: true,
-          },
-        },
-        rider: {
-          columns: {
-            id: true,
-            email: true,
-            name: true,
-            currentLocation: true,
-          },
-        },
-      },
-    });
-
-    if (!order) {
-      throw new Error("Order not found");
-    }
-
-    return order;
-  }
-
+  // Fix the getOrders method to handle relations properly
   async getOrders(userId: string, userRole: string, orgId?: string) {
     let conditions: any[] = [];
 
@@ -161,28 +112,149 @@ export class OrderService {
       conditions.push(eq(orders.orgId, orgId));
     }
 
-    const ordersList = await db.query.orders.findMany({
-      where: and(...conditions),
-      orderBy: [desc(orders.createdAt)],
-      with: {
-        customer: {
-          columns: {
-            id: true,
-            email: true,
-            name: true,
-          },
-        },
-        rider: {
-          columns: {
-            id: true,
-            email: true,
-            name: true,
-          },
-        },
-      },
-    });
+    // Use raw query to avoid Drizzle relation issues
+    const ordersList = await db
+      .select({
+        id: orders.id,
+        orderNumber: orders.orderNumber,
+        orgId: orders.orgId,
+        packageDescription: orders.packageDescription,
+        customerId: orders.customerId,
+        riderId: orders.riderId,
+        riderCurrentLocation: orders.riderCurrentLocation,
+        customerLocationLabel: orders.customerLocationLabel,
+        customerLocationPrecise: orders.customerLocationPrecise,
+        status: orders.status,
+        assignedAt: orders.assignedAt,
+        riderAcceptedAt: orders.riderAcceptedAt,
+        customerLocationSetAt: orders.customerLocationSetAt,
+        cancelledAt: orders.cancelledAt,
+        createdAt: orders.createdAt,
+        updatedAt: orders.updatedAt,
+      })
+      .from(orders)
+      .where(and(...conditions))
+      .orderBy(desc(orders.createdAt));
 
-    return ordersList;
+    // Get customer and rider details separately
+    const enhancedOrders = await Promise.all(
+      ordersList.map(async (order) => {
+        const [customer, rider] = await Promise.all([
+          db.query.users.findFirst({
+            where: eq(users.id, order.customerId),
+            columns: {
+              id: true,
+              email: true,
+              name: true,
+              phoneNumber: true,
+              locations: true,
+            },
+          }),
+          order.riderId
+            ? db.query.users.findFirst({
+                where: eq(users.id, order.riderId),
+                columns: {
+                  id: true,
+                  email: true,
+                  name: true,
+                  phoneNumber: true,
+                  currentLocation: true,
+                },
+              })
+            : Promise.resolve(null),
+        ]);
+
+        return {
+          ...order,
+          customer,
+          rider,
+        };
+      })
+    );
+
+    return enhancedOrders;
+  }
+
+  // Also fix the getOrderById method:
+  async getOrderById(
+    orderId: string,
+    userId: string,
+    userRole: string,
+    orgId?: string
+  ) {
+    let conditions: any[] = [eq(orders.id, orderId)];
+
+    if (userRole === "customer") {
+      // Customers can only see their own orders
+      conditions.push(eq(orders.customerId, userId));
+    } else if (userRole === "rider") {
+      // Riders need org context
+      if (!orgId) throw new Error("Organization context required for riders");
+      conditions.push(eq(orders.orgId, orgId));
+      conditions.push(eq(orders.riderId, userId));
+    } else {
+      // Owners need org context
+      if (!orgId) throw new Error("Organization context required for owners");
+      conditions.push(eq(orders.orgId, orgId));
+    }
+
+    const order = await db
+      .select({
+        id: orders.id,
+        orderNumber: orders.orderNumber,
+        orgId: orders.orgId,
+        packageDescription: orders.packageDescription,
+        customerId: orders.customerId,
+        riderId: orders.riderId,
+        riderCurrentLocation: orders.riderCurrentLocation,
+        customerLocationLabel: orders.customerLocationLabel,
+        customerLocationPrecise: orders.customerLocationPrecise,
+        status: orders.status,
+        assignedAt: orders.assignedAt,
+        riderAcceptedAt: orders.riderAcceptedAt,
+        customerLocationSetAt: orders.customerLocationSetAt,
+        cancelledAt: orders.cancelledAt,
+        createdAt: orders.createdAt,
+        updatedAt: orders.updatedAt,
+      })
+      .from(orders)
+      .where(and(...conditions));
+
+    if (order.length === 0) {
+      throw new Error("Order not found");
+    }
+
+    // Get customer and rider details
+    const [customer, rider] = await Promise.all([
+      db.query.users.findFirst({
+        where: eq(users.id, order[0].customerId),
+        columns: {
+          id: true,
+          email: true,
+          name: true,
+          phoneNumber: true,
+          locations: true,
+        },
+      }),
+      order[0].riderId
+        ? db.query.users.findFirst({
+            where: eq(users.id, order[0].riderId),
+            columns: {
+              id: true,
+              email: true,
+              name: true,
+              phoneNumber: true,
+              currentLocation: true,
+            },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    return {
+      ...order[0],
+      customer,
+      rider,
+    };
   }
 
   async riderAcceptOrder(
