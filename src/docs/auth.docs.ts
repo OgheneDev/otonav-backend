@@ -150,6 +150,10 @@
  *           type: string
  *           example: "Sarah Wilson"
  *           nullable: true
+ *         phoneNumber:
+ *           type: string
+ *           example: "+1234567890"
+ *           nullable: true
  *
  *     AcceptInvitation:
  *       type: object
@@ -160,6 +164,29 @@
  *           type: string
  *           description: Invitation token for existing riders to join new organizations
  *           example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+ *
+ *     # Invitation Management Schemas
+ *     ResendRiderInvitation:
+ *       type: object
+ *       required:
+ *         - riderId
+ *       properties:
+ *         riderId:
+ *           type: string
+ *           format: uuid
+ *           description: ID of the rider with pending invitation
+ *           example: "550e8400-e29b-41d4-a716-446655440000"
+ *
+ *     CancelRiderInvitation:
+ *       type: object
+ *       required:
+ *         - riderId
+ *       properties:
+ *         riderId:
+ *           type: string
+ *           format: uuid
+ *           description: ID of the rider with pending invitation
+ *           example: "550e8400-e29b-41d4-a716-446655440000"
  *
  *     # Other Auth Schemas
  *     VerifyEmail:
@@ -201,14 +228,45 @@
  *           type: string
  *           example: "+1234567890"
  *           nullable: true
- *         locationLabel:
+ *         locations:
+ *           type: array
+ *           description: Replace all locations with new array
+ *           items:
+ *             type: object
+ *             properties:
+ *               label:
+ *                 type: string
+ *                 example: "Home"
+ *               preciseLocation:
+ *                 type: string
+ *                 example: "123 Main St, City, Country"
+ *         addLocation:
+ *           type: object
+ *           description: Add a new location
+ *           properties:
+ *             label:
+ *               type: string
+ *               example: "Office"
+ *             preciseLocation:
+ *               type: string
+ *               example: "456 Work Ave, City, Country"
+ *         removeLocation:
  *           type: string
- *           nullable: true
- *           example: "Downtown Office"
- *         preciseLocation:
- *           type: string
- *           nullable: true
- *           example: "123 Main St, City, Country"
+ *           description: Label or index of location to remove
+ *           example: "Home"
+ *         updateLocation:
+ *           type: object
+ *           description: Update location by index
+ *           properties:
+ *             index:
+ *               type: integer
+ *               example: 0
+ *             label:
+ *               type: string
+ *               example: "Updated Home"
+ *             preciseLocation:
+ *               type: string
+ *               example: "789 New St, City, Country"
  *
  *     ChangePassword:
  *       type: object
@@ -285,12 +343,19 @@
  *         phoneNumber:
  *           type: string
  *           nullable: true
- *         locationLabel:
+ *         locations:
+ *           type: array
+ *           items:
+ *             type: object
+ *             properties:
+ *               label:
+ *                 type: string
+ *               preciseLocation:
+ *                 type: string
+ *         currentLocation:
  *           type: string
  *           nullable: true
- *         preciseLocation:
- *           type: string
- *           nullable: true
+ *           description: For riders only
  *         createdAt:
  *           type: string
  *           format: date-time
@@ -310,9 +375,17 @@
  *           enum: [owner, rider]
  *         isActive:
  *           type: boolean
+ *         registrationStatus:
+ *           type: string
+ *           enum: [pending, completed, cancelled, expired]
+ *         invitedAt:
+ *           type: string
+ *           format: date-time
+ *           nullable: true
  *         joinedAt:
  *           type: string
  *           format: date-time
+ *           nullable: true
  *
  *     LoginResponse:
  *       type: object
@@ -347,10 +420,16 @@
  *                 phoneNumber:
  *                   type: string
  *                   nullable: true
- *                 locationLabel:
- *                   type: string
- *                   nullable: true
- *                 preciseLocation:
+ *                 locations:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       label:
+ *                         type: string
+ *                       preciseLocation:
+ *                         type: string
+ *                 currentLocation:
  *                   type: string
  *                   nullable: true
  *                 organizations:
@@ -402,6 +481,9 @@
  *                   example: "owner"
  *                 emailVerified:
  *                   type: boolean
+ *                 registrationStatus:
+ *                   type: string
+ *                   enum: [pending, completed, cancelled, expired]
  *                 otp:
  *                   type: string
  *                   description: OTP for email verification (testing only)
@@ -426,6 +508,11 @@
  *         data:
  *           type: object
  *           properties:
+ *             id:
+ *               type: string
+ *               format: uuid
+ *               nullable: true
+ *               description: Only for new riders, null for existing riders
  *             email:
  *               type: string
  *               format: email
@@ -440,9 +527,70 @@
  *               description: |
  *                 registration: New rider needs to complete registration
  *                 invitation: Existing rider invited to join organization
+ *             status:
+ *               type: string
+ *               enum: [pending, completed, cancelled, expired]
+ *               example: "pending"
  *             token:
  *               type: string
  *               description: Registration/invitation token (for testing)
+ *             registrationLink:
+ *               type: string
+ *               nullable: true
+ *               description: Only for registration type
+ *             invitationLink:
+ *               type: string
+ *               nullable: true
+ *               description: Only for invitation type
+ *
+ *     InvitationManagementResponse:
+ *       type: object
+ *       properties:
+ *         success:
+ *           type: boolean
+ *           example: true
+ *         message:
+ *           type: string
+ *           example: "Invitation resent successfully"
+ *         emailType:
+ *           type: string
+ *           enum: [registration, invitation]
+ *           description: Type of email sent
+ *
+ *     CustomerCreationResponse:
+ *       type: object
+ *       properties:
+ *         success:
+ *           type: boolean
+ *           example: true
+ *         message:
+ *           type: string
+ *           example: "Customer registration link sent successfully"
+ *         data:
+ *           type: object
+ *           properties:
+ *             id:
+ *               type: string
+ *               format: uuid
+ *             email:
+ *               type: string
+ *               format: email
+ *             name:
+ *               type: string
+ *               nullable: true
+ *             emailSent:
+ *               type: boolean
+ *               example: true
+ *             status:
+ *               type: string
+ *               enum: [pending, completed, cancelled, expired]
+ *               example: "pending"
+ *             token:
+ *               type: string
+ *               description: Registration token (for testing)
+ *             registrationLink:
+ *               type: string
+ *               description: Registration link for customer
  *
  *     ErrorResponse:
  *       type: object
@@ -505,6 +653,7 @@
  *     description: |
  *       Creates a business owner account and their first organization.
  *       - User is created with global role "owner"
+ *       - User has registrationStatus "pending" until email verification
  *       - Organization is created with the provided business name
  *       - User is added to user_organizations as owner of the new org
  *       - JWT token will include organizations array
@@ -539,6 +688,7 @@
  *     description: |
  *       Public customer registration. Customers:
  *       - Have global role "customer"
+ *       - Have registrationStatus "pending" until email verification
  *       - Do NOT belong to any organization (no entry in user_organizations)
  *       - Are independent users who can order from multiple businesses
  *     security: []
@@ -578,6 +728,9 @@
  *                       example: "customer"
  *                     emailVerified:
  *                       type: boolean
+ *                     registrationStatus:
+ *                       type: string
+ *                       enum: [pending, completed, cancelled, expired]
  *                     otp:
  *                       type: string
  *                       description: OTP for email verification (only for testing)
@@ -602,6 +755,8 @@
  *       - orgId (if user has exactly one organization)
  *       - organizations array (list of all org memberships)
  *       Response includes user's organizations for UI to show organization switcher
+ *
+ *       **Important**: If email is not verified, a new OTP will be sent and login will fail.
  *     security: []
  *     requestBody:
  *       required: true
@@ -627,6 +782,12 @@
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: Unauthorized - Email not verified (new OTP sent)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 
 /**
@@ -635,7 +796,10 @@
  *   post:
  *     summary: Verify email with OTP
  *     tags: [Auth]
- *     description: Public endpoint - No authentication required
+ *     description: |
+ *       Public endpoint - No authentication required
+ *       Verifies email and updates registrationStatus to "completed"
+ *       Clears OTP from database after successful verification
  *     security: []
  *     requestBody:
  *       required: true
@@ -693,6 +857,9 @@
  *                 message:
  *                   type: string
  *                   example: "New OTP sent to your email."
+ *                 otp:
+ *                   type: string
+ *                   description: OTP code (only in development environment)
  *       400:
  *         description: Bad request
  *         content:
@@ -894,7 +1061,15 @@
  *   put:
  *     summary: Update user profile
  *     tags: [Auth]
- *     description: Protected endpoint - Requires valid JWT token
+ *     description: |
+ *       Protected endpoint - Requires valid JWT token
+ *       Supports location management operations:
+ *       - Replace all locations with new array
+ *       - Add a new location (validates unique label)
+ *       - Remove location by index or label
+ *       - Update location by index
+ *
+ *       If email is changed, sends verification OTP and sets emailVerified to false
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -931,10 +1106,16 @@
  *                     phoneNumber:
  *                       type: string
  *                       nullable: true
- *                     locationLabel:
- *                       type: string
- *                       nullable: true
- *                     preciseLocation:
+ *                     locations:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           label:
+ *                             type: string
+ *                           preciseLocation:
+ *                             type: string
+ *                     currentLocation:
  *                       type: string
  *                       nullable: true
  *                     role:
@@ -1016,13 +1197,15 @@
  *       1. **New Rider (registration)**:
  *          - Rider doesn't exist in system
  *          - Creates account with temporary password
+ *          - Sets registrationStatus to "pending"
  *          - Sends registration link with orgId in token
  *          - On completion, adds rider to user_organizations
  *
  *       2. **Existing Rider (invitation)**:
  *          - Rider exists but not in this organization
  *          - Sends invitation to join organization
- *          - On acceptance, adds rider to user_organizations
+ *          - Creates pending membership in user_organizations
+ *          - On acceptance, updates registrationStatus to "completed"
  *
  *       **Middleware Chain:**
  *       1. authenticateToken - Valid JWT
@@ -1067,6 +1250,102 @@
 
 /**
  * @swagger
+ * /api/auth/rider/resend-invitation:
+ *   post:
+ *     summary: Resend rider invitation (Owner only)
+ *     tags: [Auth]
+ *     description: |
+ *       **REQUIRES ORGANIZATION CONTEXT**
+ *
+ *       Resends invitation/registration email to rider with pending status.
+ *       Determines email type based on rider's registration status.
+ *
+ *       **Middleware Chain:**
+ *       1. authenticateToken - Valid JWT
+ *       2. requireOrgContext - Token has orgId
+ *       3. requireOrgMember - User belongs to this org
+ *       4. requireOrgOwner - User is owner in this org
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/ResendRiderInvitation'
+ *     responses:
+ *       200:
+ *         description: Invitation resent successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/InvitationManagementResponse'
+ *       400:
+ *         description: Bad request
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         $ref: '#/components/responses/UnauthorizedError'
+ *       403:
+ *         $ref: '#/components/responses/ForbiddenError'
+ */
+
+/**
+ * @swagger
+ * /api/auth/rider/cancel-invitation:
+ *   post:
+ *     summary: Cancel rider invitation (Owner only)
+ *     tags: [Auth]
+ *     description: |
+ *       **REQUIRES ORGANIZATION CONTEXT**
+ *
+ *       Cancels pending rider invitation.
+ *       Removes user from user_organizations.
+ *       If user has no other organization memberships and is unverified, deletes user.
+ *
+ *       **Middleware Chain:**
+ *       1. authenticateToken - Valid JWT
+ *       2. requireOrgContext - Token has orgId
+ *       3. requireOrgMember - User belongs to this org
+ *       4. requireOrgOwner - User is owner in this org
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CancelRiderInvitation'
+ *     responses:
+ *       200:
+ *         description: Invitation cancelled successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Invitation cancelled successfully"
+ *       400:
+ *         description: Bad request
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         $ref: '#/components/responses/UnauthorizedError'
+ *       403:
+ *         $ref: '#/components/responses/ForbiddenError'
+ */
+
+/**
+ * @swagger
  * /api/auth/rider/complete-registration:
  *   post:
  *     summary: Complete rider registration via token (Public)
@@ -1080,7 +1359,7 @@
  *       Steps:
  *       1. Validates registration token (includes email, orgId, role=rider)
  *       2. Sets password and phone number
- *       3. Adds user to user_organizations for the specified orgId
+ *       3. Updates registrationStatus to "completed" in user_organizations
  *       4. Sends OTP for email verification
  *
  *       Note: Rider's global role becomes "rider"
@@ -1123,6 +1402,9 @@
  *                       type: boolean
  *                     registrationCompleted:
  *                       type: boolean
+ *                     registrationStatus:
+ *                       type: string
+ *                       enum: [pending, completed, cancelled, expired]
  *                     otp:
  *                       type: string
  *                       description: OTP for email verification (only for testing)
@@ -1148,7 +1430,7 @@
  *
  *       Steps:
  *       1. Validates invitation token
- *       2. Adds user to user_organizations for the new organization
+ *       2. Updates registrationStatus to "completed" in user_organizations
  *       3. User can now work with multiple organizations
  *
  *       Note: User's global role remains "rider"
@@ -1209,9 +1491,10 @@
  *
  *       Flow:
  *       1. Creates customer account with temporary password
- *       2. Sends registration link WITHOUT orgId in token
- *       3. Customer completes registration independently
- *       4. Customer can order from any business later
+ *       2. Sets registrationStatus to "pending"
+ *       3. Sends registration link WITHOUT orgId in token
+ *       4. Customer completes registration independently
+ *       5. Customer can order from any business later
  *
  *       **Middleware Chain:**
  *       1. authenticateToken - Valid JWT
@@ -1232,28 +1515,7 @@
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Customer registration link sent successfully"
- *                 data:
- *                   type: object
- *                   properties:
- *                     email:
- *                       type: string
- *                       format: email
- *                     name:
- *                       type: string
- *                     emailSent:
- *                       type: boolean
- *                       example: true
- *                     token:
- *                       type: string
- *                       description: Registration token (for testing)
+ *               $ref: '#/components/schemas/CustomerCreationResponse'
  *       400:
  *         description: Bad request
  *         content:
@@ -1289,9 +1551,9 @@
  *
  *       Steps:
  *       1. Validates registration token (includes email, role=customer, NO orgId)
- *       2. Sets password and optional name
- *       3. Sends OTP for email verification
- *       4. Returns access token for immediate login
+ *       2. Sets password and optional name/phoneNumber
+ *       3. Updates registrationStatus to "completed"
+ *       4. Sends OTP for email verification
  *
  *       Note: Customer's global role is "customer"
  *     security: []
@@ -1333,6 +1595,12 @@
  *                       type: boolean
  *                     registrationCompleted:
  *                       type: boolean
+ *                     registrationStatus:
+ *                       type: string
+ *                       enum: [pending, completed, cancelled, expired]
+ *                     phoneNumber:
+ *                       type: string
+ *                       nullable: true
  *                     otp:
  *                       type: string
  *                       description: OTP for email verification (only for testing)
