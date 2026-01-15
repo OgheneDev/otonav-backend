@@ -52,7 +52,7 @@ export class OrderService {
         throw new Error("Customer not found or not verified");
       }
 
-      // Verify rider belongs to organization and is a rider
+      // Verify rider belongs to organization and is a rider - FIXED
       const riderMembership = await tx.query.userOrganizations.findFirst({
         where: and(
           eq(userOrganizations.userId, dto.riderId),
@@ -60,13 +60,19 @@ export class OrderService {
           eq(userOrganizations.role, "rider"),
           eq(userOrganizations.isActive, true)
         ),
-        with: {
-          user: true,
-        },
       });
 
       if (!riderMembership) {
         throw new Error("Rider is not a member of this organization");
+      }
+
+      // Get rider details separately
+      const rider = await tx.query.users.findFirst({
+        where: eq(users.id, dto.riderId),
+      });
+
+      if (!rider) {
+        throw new Error("Rider not found");
       }
 
       // Create order
@@ -84,17 +90,12 @@ export class OrderService {
         .returning();
 
       // Send email notifications
-      await this.sendAssignmentNotifications(
-        order,
-        customer,
-        riderMembership.user
-      );
+      await this.sendAssignmentNotifications(order, customer, rider);
 
       return order;
     });
   }
 
-  // Fix the getOrders method to handle relations properly
   async getOrders(userId: string, userRole: string, orgId?: string) {
     let conditions: any[] = [];
 
@@ -175,7 +176,6 @@ export class OrderService {
     return enhancedOrders;
   }
 
-  // Also fix the getOrderById method:
   async getOrderById(
     orderId: string,
     userId: string,
@@ -433,23 +433,29 @@ export class OrderService {
       );
     }
 
+    // FIXED: Get order and customer separately
     const order = await db.query.orders.findFirst({
       where: and(eq(orders.id, orderId), eq(orders.orgId, orgId)),
-      with: {
-        customer: {
-          columns: {
-            locations: true,
-          },
-        },
-      },
     });
 
     if (!order) {
       throw new Error("Order not found");
     }
 
+    // Get customer details
+    const customer = await db.query.users.findFirst({
+      where: eq(users.id, order.customerId),
+      columns: {
+        locations: true,
+      },
+    });
+
+    if (!customer) {
+      throw new Error("Customer not found");
+    }
+
     // Type assertion for customer.locations
-    const customerLocations = (order.customer as any)?.locations as
+    const customerLocations = customer.locations as
       | Array<{
           label: string;
           preciseLocation: string;
@@ -468,7 +474,7 @@ export class OrderService {
     orderId: string,
     userId: string,
     userRole: string,
-    orgId?: string // Optional for customers
+    orgId?: string
   ) {
     let conditions: any[] = [eq(orders.id, orderId)];
 
