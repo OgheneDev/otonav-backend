@@ -1703,7 +1703,7 @@ export const logoutUser = async (userId: string) => {
 };
 
 /**
- * Update User Profile
+ * Update User Profile with location management
  */
 export const updateUserProfile = async (
   userId: string,
@@ -1711,10 +1711,34 @@ export const updateUserProfile = async (
     name?: string | null;
     email?: string;
     phoneNumber?: string;
-    locationLabel?: string | null;
-    preciseLocation?: string | null;
+    // For location operations, you can pass:
+    // - locations: Array to replace all locations
+    // - addLocation: { label, preciseLocation } to add a new one
+    // - removeLocation: index or label to remove
+    // - updateLocation: { index, label, preciseLocation } to update
+    locations?: Array<{ label: string; preciseLocation: string }>;
+    addLocation?: { label: string; preciseLocation: string };
+    removeLocation?: number | string; // index or label
+    updateLocation?: {
+      index: number;
+      label?: string;
+      preciseLocation?: string;
+    };
   }
 ) => {
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+    columns: {
+      id: true,
+      locations: true,
+      role: true,
+    },
+  });
+
+  if (!user) {
+    throw new Error("User not found");
+  }
+
   const updateData: any = {};
 
   if (updates.name !== undefined) {
@@ -1722,7 +1746,6 @@ export const updateUserProfile = async (
   }
 
   if (updates.phoneNumber !== undefined) {
-    // Validate phone number format (optional)
     if (updates.phoneNumber && updates.phoneNumber.trim() !== "") {
       const phoneRegex = /^[+]?[0-9\s\-\(\)]{10,}$/;
       if (!phoneRegex.test(updates.phoneNumber)) {
@@ -1732,14 +1755,90 @@ export const updateUserProfile = async (
     updateData.phoneNumber = updates.phoneNumber || null;
   }
 
-  // Handle locationLabel
-  if (updates.locationLabel !== undefined) {
-    updateData.locationLabel = updates.locationLabel || null;
-  }
+  // Handle location operations
+  const currentLocations: Array<{ label: string; preciseLocation: string }> =
+    user.locations || [];
 
-  // Handle preciseLocation
-  if (updates.preciseLocation !== undefined) {
-    updateData.preciseLocation = updates.preciseLocation || null;
+  // Option 1: Replace all locations
+  if (updates.locations !== undefined) {
+    updateData.locations = updates.locations;
+  }
+  // Option 2: Add a new location
+  else if (updates.addLocation) {
+    const newLocation = {
+      label: updates.addLocation.label,
+      preciseLocation: updates.addLocation.preciseLocation,
+    };
+
+    // Check for duplicate labels
+    const labelExists = currentLocations.some(
+      (loc) => loc.label === newLocation.label
+    );
+
+    if (labelExists) {
+      throw new Error(
+        `Location with label "${newLocation.label}" already exists`
+      );
+    }
+
+    updateData.locations = [...currentLocations, newLocation];
+  }
+  // Option 3: Remove a location
+  else if (updates.removeLocation !== undefined) {
+    let indexToRemove: number;
+
+    if (typeof updates.removeLocation === "string") {
+      // Find by label
+      indexToRemove = currentLocations.findIndex(
+        (loc) => loc.label === updates.removeLocation
+      );
+      if (indexToRemove === -1) {
+        throw new Error(
+          `Location with label "${updates.removeLocation}" not found`
+        );
+      }
+    } else {
+      // By index
+      indexToRemove = updates.removeLocation as number;
+      if (indexToRemove < 0 || indexToRemove >= currentLocations.length) {
+        throw new Error(`Location index ${indexToRemove} out of bounds`);
+      }
+    }
+
+    const newLocations = [...currentLocations];
+    newLocations.splice(indexToRemove, 1);
+    updateData.locations = newLocations;
+  }
+  // Option 4: Update a location
+  else if (updates.updateLocation) {
+    const { index, label, preciseLocation } = updates.updateLocation;
+
+    if (index < 0 || index >= currentLocations.length) {
+      throw new Error(`Location index ${index} out of bounds`);
+    }
+
+    const newLocations = [...currentLocations];
+
+    // Check if new label conflicts with other locations
+    if (label && label !== newLocations[index].label) {
+      const labelExists = newLocations.some(
+        (loc, i) => i !== index && loc.label === label
+      );
+
+      if (labelExists) {
+        throw new Error(`Location with label "${label}" already exists`);
+      }
+    }
+
+    if (label !== undefined) {
+      newLocations[index].label = label;
+    }
+
+    if (preciseLocation !== undefined) {
+      newLocations[index].preciseLocation = preciseLocation;
+    }
+
+    updateData.locations = newLocations;
   }
 
   if (updates.email) {

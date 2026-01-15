@@ -85,9 +85,18 @@ export const users = pgTable("users", {
   password: text("password").notNull(),
   name: text("name"),
 
-  // Location fields
-  locationLabel: text("location_label"),
-  preciseLocation: text("precise_location"),
+  // Store locations as JSONB array for customers
+  locations: jsonb("locations")
+    .$type<
+      Array<{
+        label: string;
+        preciseLocation: string;
+      }>
+    >()
+    .default([]),
+
+  // For riders, store their current real-time location
+  currentLocation: text("current_location"),
 
   // Global user type (default role)
   role: userRoleEnum("role").default("customer").notNull(),
