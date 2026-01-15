@@ -12,16 +12,10 @@ export class OrderController {
       const { user } = req;
       const dto: CreateOrderDTO = req.body;
 
-      if (!user || !user.orgId || user.role !== "owner") {
-        return res.status(403).json({
-          success: false,
-          message: "Only organization owners can create orders",
-        });
-      }
-
+      // Middleware already verified user is owner with orgId
       const order = await orderService.createOrder(
-        user.orgId,
-        user.userId,
+        user!.orgId!, // orgId is guaranteed by middleware for owners
+        user!.userId,
         dto
       );
 
@@ -44,20 +38,13 @@ export class OrderController {
       const { user } = req;
       const { orderId } = req.params;
 
-      if (!user) {
-        return res.status(401).json({
-          success: false,
-          message: "Authentication required",
-        });
-      }
-
       const orderIdString = Array.isArray(orderId) ? orderId[0] : orderId;
-      const orgId = user.orgId || undefined; // Convert null to undefined
+      const orgId = user?.orgId || undefined; // orgId may be undefined for customers
 
       const order = await orderService.getOrderById(
         orderIdString,
-        user.userId,
-        user.role || "",
+        user!.userId,
+        user!.role || "",
         orgId
       );
 
@@ -78,18 +65,11 @@ export class OrderController {
     try {
       const { user } = req;
 
-      if (!user) {
-        return res.status(401).json({
-          success: false,
-          message: "Authentication required",
-        });
-      }
-
-      const orgId = user.orgId || undefined; // Convert null to undefined
+      const orgId = user?.orgId || undefined; // orgId may be undefined for customers
 
       const orders = await orderService.getOrders(
-        user.userId,
-        user.role || "",
+        user!.userId,
+        user!.role || "",
         orgId
       );
 
@@ -112,13 +92,7 @@ export class OrderController {
       const { orderId } = req.params;
       const { currentLocation } = req.body;
 
-      if (!user || user.role !== "rider") {
-        return res.status(403).json({
-          success: false,
-          message: "Only riders can accept orders",
-        });
-      }
-
+      // Middleware already verified user is rider
       if (!currentLocation) {
         return res.status(400).json({
           success: false,
@@ -130,7 +104,7 @@ export class OrderController {
 
       const order = await orderService.riderAcceptOrder(
         orderIdString,
-        user.userId,
+        user!.userId,
         currentLocation
       );
 
@@ -154,13 +128,7 @@ export class OrderController {
       const { orderId } = req.params;
       const dto: AssignLocationDTO = req.body;
 
-      if (!user || user.role !== "customer") {
-        return res.status(403).json({
-          success: false,
-          message: "Only customers can set their location",
-        });
-      }
-
+      // Middleware already verified user is customer
       if (!dto.locationLabel) {
         return res.status(400).json({
           success: false,
@@ -179,7 +147,7 @@ export class OrderController {
 
       const order = await orderService.setCustomerLocation(
         orderIdString,
-        user.userId,
+        user!.userId,
         dto
       );
 
@@ -203,13 +171,7 @@ export class OrderController {
       const { orderId } = req.params;
       const dto: AssignLocationDTO = req.body;
 
-      if (!user || user.role !== "owner" || !user.orgId) {
-        return res.status(403).json({
-          success: false,
-          message: "Only organization owners can set customer locations",
-        });
-      }
-
+      // Middleware already verified user is owner with orgId
       if (!dto.locationLabel) {
         return res.status(400).json({
           success: false,
@@ -221,8 +183,8 @@ export class OrderController {
 
       const order = await orderService.ownerSetCustomerLocation(
         orderIdString,
-        user.userId,
-        user.orgId,
+        user!.userId,
+        user!.orgId!, // orgId is guaranteed by middleware for owners
         dto
       );
 
@@ -245,19 +207,13 @@ export class OrderController {
       const { user } = req;
       const { orderId } = req.params;
 
-      if (!user || user.role !== "owner" || !user.orgId) {
-        return res.status(403).json({
-          success: false,
-          message: "Only organization owners can view customer location labels",
-        });
-      }
-
+      // Middleware already verified user is owner with orgId
       const orderIdString = Array.isArray(orderId) ? orderId[0] : orderId;
 
       const locations = await orderService.getCustomerLocationLabels(
         orderIdString,
-        user.orgId,
-        user.userId
+        user!.orgId!, // orgId is guaranteed by middleware for owners
+        user!.userId
       );
 
       return res.status(200).json({
@@ -278,20 +234,13 @@ export class OrderController {
       const { user } = req;
       const { orderId } = req.params;
 
-      if (!user) {
-        return res.status(401).json({
-          success: false,
-          message: "Authentication required",
-        });
-      }
-
       const orderIdString = Array.isArray(orderId) ? orderId[0] : orderId;
-      const orgId = user.orgId || undefined; // Convert null to undefined
+      const orgId = user?.orgId || undefined; // orgId may be undefined for customers
 
       const order = await orderService.cancelOrder(
         orderIdString,
-        user.userId,
-        user.role || "",
+        user!.userId,
+        user!.role || "",
         orgId
       );
 
