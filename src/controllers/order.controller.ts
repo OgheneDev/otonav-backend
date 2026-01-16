@@ -12,9 +12,8 @@ export class OrderController {
       const { user } = req;
       const dto: CreateOrderDTO = req.body;
 
-      // Middleware already verified user is owner with orgId
       const order = await orderService.createOrder(
-        user!.orgId!, // orgId is guaranteed by middleware for owners
+        user!.orgId!,
         user!.userId,
         dto
       );
@@ -39,7 +38,7 @@ export class OrderController {
       const { orderId } = req.params;
 
       const orderIdString = Array.isArray(orderId) ? orderId[0] : orderId;
-      const orgId = user?.orgId || undefined; // orgId may be undefined for customers
+      const orgId = user?.orgId || undefined;
 
       const order = await orderService.getOrderById(
         orderIdString,
@@ -65,7 +64,7 @@ export class OrderController {
     try {
       const { user } = req;
 
-      const orgId = user?.orgId || undefined; // orgId may be undefined for customers
+      const orgId = user?.orgId || undefined;
 
       const orders = await orderService.getOrders(
         user!.userId,
@@ -92,7 +91,6 @@ export class OrderController {
       const { orderId } = req.params;
       const { currentLocation } = req.body;
 
-      // Middleware already verified user is rider
       if (!currentLocation) {
         return res.status(400).json({
           success: false,
@@ -128,18 +126,10 @@ export class OrderController {
       const { orderId } = req.params;
       const dto: AssignLocationDTO = req.body;
 
-      // Middleware already verified user is customer
       if (!dto.locationLabel) {
         return res.status(400).json({
           success: false,
           message: "Location label is required",
-        });
-      }
-
-      if (!dto.locationPrecise) {
-        return res.status(400).json({
-          success: false,
-          message: "Precise location is required",
         });
       }
 
@@ -171,7 +161,6 @@ export class OrderController {
       const { orderId } = req.params;
       const dto: AssignLocationDTO = req.body;
 
-      // Middleware already verified user is owner with orgId
       if (!dto.locationLabel) {
         return res.status(400).json({
           success: false,
@@ -184,7 +173,7 @@ export class OrderController {
       const order = await orderService.ownerSetCustomerLocation(
         orderIdString,
         user!.userId,
-        user!.orgId!, // orgId is guaranteed by middleware for owners
+        user!.orgId!,
         dto
       );
 
@@ -207,12 +196,11 @@ export class OrderController {
       const { user } = req;
       const { orderId } = req.params;
 
-      // Middleware already verified user is owner with orgId
       const orderIdString = Array.isArray(orderId) ? orderId[0] : orderId;
 
       const locations = await orderService.getCustomerLocationLabels(
         orderIdString,
-        user!.orgId!, // orgId is guaranteed by middleware for owners
+        user!.orgId!,
         user!.userId
       );
 
@@ -235,7 +223,7 @@ export class OrderController {
       const { orderId } = req.params;
 
       const orderIdString = Array.isArray(orderId) ? orderId[0] : orderId;
-      const orgId = user?.orgId || undefined; // orgId may be undefined for customers
+      const orgId = user?.orgId || undefined;
 
       const order = await orderService.cancelOrder(
         orderIdString,
@@ -251,6 +239,34 @@ export class OrderController {
       });
     } catch (error: any) {
       console.error("Error cancelling order:", error);
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  }
+
+  // NEW METHOD: Confirm delivery
+  async confirmDelivery(req: AuthRequest, res: Response) {
+    try {
+      const { user } = req;
+      const { orderId } = req.params;
+
+      // Middleware already verified user is rider
+      const orderIdString = Array.isArray(orderId) ? orderId[0] : orderId;
+
+      const order = await orderService.confirmDelivery(
+        orderIdString,
+        user!.userId
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Delivery confirmed successfully",
+        data: order,
+      });
+    } catch (error: any) {
+      console.error("Error confirming delivery:", error);
       return res.status(400).json({
         success: false,
         message: error.message,

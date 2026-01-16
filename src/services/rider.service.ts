@@ -1,4 +1,3 @@
-// services/rider.service.ts - FIXED VERSION
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { db } from "../config/database.js";
 import {
@@ -663,7 +662,7 @@ export class RiderService {
                     <p>We thank you for your service with ${emailData.organizationName} and wish you the best.</p>
                     
                     <p>Sincerely,<br>
-                    The ${emailData.organizationName} Team</p>
+                    The ${emailData.organizationName} Team</p> 
                 </div>
                 <div class="footer">
                     <p>This is an automated message. Please do not reply to this email.</p>

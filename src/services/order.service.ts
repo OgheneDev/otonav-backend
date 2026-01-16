@@ -25,7 +25,6 @@ export class OrderService {
 
   async createOrder(orgId: string, ownerUserId: string, dto: CreateOrderDTO) {
     return await db.transaction(async (tx) => {
-      // Verify owner belongs to organization
       const ownerMembership = await tx.query.userOrganizations.findFirst({
         where: and(
           eq(userOrganizations.userId, ownerUserId),
@@ -39,12 +38,11 @@ export class OrderService {
         throw new Error("Only organization owners can create orders");
       }
 
-      // Verify customer exists (customers don't need org membership)
       const customer = await tx.query.users.findFirst({
         where: and(
           eq(users.id, dto.customerId),
           eq(users.role, "customer"),
-          eq(users.emailVerified, true) // Customer should be verified
+          eq(users.emailVerified, true)
         ),
       });
 
@@ -52,7 +50,6 @@ export class OrderService {
         throw new Error("Customer not found or not verified");
       }
 
-      // Verify rider belongs to organization and is a rider - FIXED
       const riderMembership = await tx.query.userOrganizations.findFirst({
         where: and(
           eq(userOrganizations.userId, dto.riderId),
@@ -66,7 +63,6 @@ export class OrderService {
         throw new Error("Rider is not a member of this organization");
       }
 
-      // Get rider details separately
       const rider = await tx.query.users.findFirst({
         where: eq(users.id, dto.riderId),
       });
@@ -75,7 +71,6 @@ export class OrderService {
         throw new Error("Rider not found");
       }
 
-      // Create order
       const [order] = await tx
         .insert(orders)
         .values({
@@ -84,12 +79,11 @@ export class OrderService {
           packageDescription: dto.packageDescription,
           customerId: dto.customerId,
           riderId: dto.riderId,
-          status: "assigned",
+          status: "pending",
           assignedAt: new Date(),
         })
         .returning();
 
-      // Send email notifications
       await this.sendAssignmentNotifications(order, customer, rider);
 
       return order;
@@ -100,20 +94,16 @@ export class OrderService {
     let conditions: any[] = [];
 
     if (userRole === "customer") {
-      // Customers see all their orders
       conditions.push(eq(orders.customerId, userId));
     } else if (userRole === "rider") {
-      // Riders see their orders in current org
       if (!orgId) throw new Error("Organization context required for riders");
       conditions.push(eq(orders.orgId, orgId));
       conditions.push(eq(orders.riderId, userId));
     } else {
-      // Owners see all orders in their org
       if (!orgId) throw new Error("Organization context required for owners");
       conditions.push(eq(orders.orgId, orgId));
     }
 
-    // Use raw query to avoid Drizzle relation issues
     const ordersList = await db
       .select({
         id: orders.id,
@@ -129,6 +119,7 @@ export class OrderService {
         assignedAt: orders.assignedAt,
         riderAcceptedAt: orders.riderAcceptedAt,
         customerLocationSetAt: orders.customerLocationSetAt,
+        deliveredAt: orders.deliveredAt,
         cancelledAt: orders.cancelledAt,
         createdAt: orders.createdAt,
         updatedAt: orders.updatedAt,
@@ -137,7 +128,6 @@ export class OrderService {
       .where(and(...conditions))
       .orderBy(desc(orders.createdAt));
 
-    // Get customer and rider details separately
     const enhancedOrders = await Promise.all(
       ordersList.map(async (order) => {
         const [customer, rider] = await Promise.all([
@@ -185,15 +175,12 @@ export class OrderService {
     let conditions: any[] = [eq(orders.id, orderId)];
 
     if (userRole === "customer") {
-      // Customers can only see their own orders
       conditions.push(eq(orders.customerId, userId));
     } else if (userRole === "rider") {
-      // Riders need org context
       if (!orgId) throw new Error("Organization context required for riders");
       conditions.push(eq(orders.orgId, orgId));
       conditions.push(eq(orders.riderId, userId));
     } else {
-      // Owners need org context
       if (!orgId) throw new Error("Organization context required for owners");
       conditions.push(eq(orders.orgId, orgId));
     }
@@ -213,6 +200,7 @@ export class OrderService {
         assignedAt: orders.assignedAt,
         riderAcceptedAt: orders.riderAcceptedAt,
         customerLocationSetAt: orders.customerLocationSetAt,
+        deliveredAt: orders.deliveredAt,
         cancelledAt: orders.cancelledAt,
         createdAt: orders.createdAt,
         updatedAt: orders.updatedAt,
@@ -224,7 +212,6 @@ export class OrderService {
       throw new Error("Order not found");
     }
 
-    // Get customer and rider details
     const [customer, rider] = await Promise.all([
       db.query.users.findFirst({
         where: eq(users.id, order[0].customerId),
@@ -263,24 +250,33 @@ export class OrderService {
     currentLocation: string
   ) {
     return await db.transaction(async (tx) => {
-      // Find order assigned to this rider
       const order = await tx.query.orders.findFirst({
         where: and(
           eq(orders.id, orderId),
           eq(orders.riderId, riderId),
-          eq(orders.status, "assigned")
+          sql`${orders.status} IN ('pending', 'customer_location_set')`
         ),
       });
 
       if (!order) {
-        throw new Error("Order not found or not assigned to this rider");
+        throw new Error(
+          "Order not found or not in a state that can be accepted"
+        );
       }
 
-      // Update order
+      let nextStatus: "rider_accepted" | "confirmed";
+      if (order.status === "pending") {
+        nextStatus = "rider_accepted";
+      } else if (order.status === "customer_location_set") {
+        nextStatus = "confirmed";
+      } else {
+        throw new Error("Order cannot be accepted in current state");
+      }
+
       const [updatedOrder] = await tx
         .update(orders)
         .set({
-          status: "rider_accepted",
+          status: nextStatus,
           riderCurrentLocation: currentLocation,
           riderAcceptedAt: new Date(),
           updatedAt: new Date(),
@@ -288,7 +284,6 @@ export class OrderService {
         .where(eq(orders.id, orderId))
         .returning();
 
-      // Update rider's current location in users table
       await tx
         .update(users)
         .set({
@@ -305,31 +300,44 @@ export class OrderService {
     customerId: string,
     dto: AssignLocationDTO
   ) {
-    const order = await db.query.orders.findFirst({
-      where: and(
-        eq(orders.id, orderId),
-        eq(orders.customerId, customerId),
-        eq(orders.status, "rider_accepted")
-      ),
+    return await db.transaction(async (tx) => {
+      const order = await tx.query.orders.findFirst({
+        where: and(
+          eq(orders.id, orderId),
+          eq(orders.customerId, customerId),
+          sql`${orders.status} IN ('pending', 'rider_accepted')`
+        ),
+      });
+
+      if (!order) {
+        throw new Error(
+          "Order not found or not in a state that can have location set"
+        );
+      }
+
+      let nextStatus: "customer_location_set" | "confirmed";
+      if (order.status === "pending") {
+        nextStatus = "customer_location_set";
+      } else if (order.status === "rider_accepted") {
+        nextStatus = "confirmed";
+      } else {
+        throw new Error("Location cannot be set in current state");
+      }
+
+      const [updatedOrder] = await tx
+        .update(orders)
+        .set({
+          customerLocationLabel: dto.locationLabel,
+          customerLocationPrecise: dto.locationPrecise || dto.locationLabel,
+          status: nextStatus,
+          customerLocationSetAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(orders.id, orderId))
+        .returning();
+
+      return updatedOrder;
     });
-
-    if (!order) {
-      throw new Error("Order not found or rider hasn't accepted yet");
-    }
-
-    const [updatedOrder] = await db
-      .update(orders)
-      .set({
-        customerLocationLabel: dto.locationLabel,
-        customerLocationPrecise: dto.locationPrecise,
-        status: "customer_location_set",
-        customerLocationSetAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(orders.id, orderId))
-      .returning();
-
-    return updatedOrder;
   }
 
   async ownerSetCustomerLocation(
@@ -339,7 +347,6 @@ export class OrderService {
     dto: AssignLocationDTO
   ) {
     return await db.transaction(async (tx) => {
-      // Verify owner belongs to organization
       const ownerMembership = await tx.query.userOrganizations.findFirst({
         where: and(
           eq(userOrganizations.userId, ownerId),
@@ -357,15 +364,16 @@ export class OrderService {
         where: and(
           eq(orders.id, orderId),
           eq(orders.orgId, orgId),
-          eq(orders.status, "rider_accepted")
+          sql`${orders.status} IN ('pending', 'rider_accepted')`
         ),
       });
 
       if (!order) {
-        throw new Error("Order not found or rider hasn't accepted yet");
+        throw new Error(
+          "Order not found or not in a state that can have location set"
+        );
       }
 
-      // Get customer's saved locations to validate label
       const customer = await tx.query.users.findFirst({
         where: eq(users.id, order.customerId),
         columns: {
@@ -377,7 +385,6 @@ export class OrderService {
         throw new Error("Customer not found");
       }
 
-      // Type assertion for customer.locations
       const customerLocations = customer.locations as
         | Array<{
             label: string;
@@ -385,7 +392,6 @@ export class OrderService {
           }>
         | undefined;
 
-      // Find the precise location from customer's saved locations
       const savedLocation = customerLocations?.find(
         (loc) => loc.label === dto.locationLabel
       );
@@ -396,13 +402,50 @@ export class OrderService {
         );
       }
 
+      let nextStatus: "customer_location_set" | "confirmed";
+      if (order.status === "pending") {
+        nextStatus = "customer_location_set";
+      } else if (order.status === "rider_accepted") {
+        nextStatus = "confirmed";
+      } else {
+        throw new Error("Location cannot be set in current state");
+      }
+
       const [updatedOrder] = await tx
         .update(orders)
         .set({
           customerLocationLabel: dto.locationLabel,
           customerLocationPrecise: savedLocation.preciseLocation,
-          status: "customer_location_set",
+          status: nextStatus,
           customerLocationSetAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(orders.id, orderId))
+        .returning();
+
+      return updatedOrder;
+    });
+  }
+
+  async confirmDelivery(orderId: string, riderId: string) {
+    return await db.transaction(async (tx) => {
+      const order = await tx.query.orders.findFirst({
+        where: and(
+          eq(orders.id, orderId),
+          eq(orders.riderId, riderId),
+          eq(orders.status, "confirmed")
+        ),
+      });
+
+      if (!order) {
+        throw new Error("Order not found or not confirmed");
+      }
+
+      const [updatedOrder] = await tx
+        .update(orders)
+        .set({
+          status: "delivered",
+          deliveredAt: new Date(),
           updatedAt: new Date(),
         })
         .where(eq(orders.id, orderId))
@@ -417,7 +460,6 @@ export class OrderService {
     orgId: string,
     ownerId: string
   ) {
-    // Verify owner belongs to organization
     const ownerMembership = await db.query.userOrganizations.findFirst({
       where: and(
         eq(userOrganizations.userId, ownerId),
@@ -433,7 +475,6 @@ export class OrderService {
       );
     }
 
-    // FIXED: Get order and customer separately
     const order = await db.query.orders.findFirst({
       where: and(eq(orders.id, orderId), eq(orders.orgId, orgId)),
     });
@@ -442,7 +483,6 @@ export class OrderService {
       throw new Error("Order not found");
     }
 
-    // Get customer details
     const customer = await db.query.users.findFirst({
       where: eq(users.id, order.customerId),
       columns: {
@@ -454,7 +494,6 @@ export class OrderService {
       throw new Error("Customer not found");
     }
 
-    // Type assertion for customer.locations
     const customerLocations = customer.locations as
       | Array<{
           label: string;
@@ -462,7 +501,6 @@ export class OrderService {
         }>
       | undefined;
 
-    // Return only location labels (not precise locations)
     return (
       customerLocations?.map((loc) => ({
         label: loc.label,
@@ -479,10 +517,8 @@ export class OrderService {
     let conditions: any[] = [eq(orders.id, orderId)];
 
     if (userRole === "customer") {
-      // Customers can only cancel their own orders
       conditions.push(eq(orders.customerId, userId));
     } else {
-      // Owners/riders need org context
       if (!orgId) throw new Error("Organization context required");
       conditions.push(eq(orders.orgId, orgId));
     }
@@ -495,14 +531,12 @@ export class OrderService {
       throw new Error("Order not found");
     }
 
-    // Check permissions for riders
     if (userRole === "rider" && order.riderId !== userId) {
       throw new Error("You can only cancel orders assigned to you");
     }
 
-    // Check if order can be cancelled
-    if (!["pending", "assigned", "rider_accepted"].includes(order.status)) {
-      throw new Error("Order cannot be cancelled in its current state");
+    if (order.status === "delivered") {
+      throw new Error("Delivered orders cannot be cancelled");
     }
 
     const [updatedOrder] = await db
@@ -510,6 +544,7 @@ export class OrderService {
       .set({
         status: "cancelled",
         cancelledAt: new Date(),
+        cancelledBy: userId,
         updatedAt: new Date(),
       })
       .where(eq(orders.id, orderId))
@@ -524,7 +559,6 @@ export class OrderService {
     rider: any
   ) {
     try {
-      // Send email to customer
       if (customer.email) {
         await sendEmail({
           to: customer.email,
@@ -543,7 +577,6 @@ export class OrderService {
         });
       }
 
-      // Send email to rider
       if (rider.email) {
         await sendEmail({
           to: rider.email,
@@ -563,7 +596,6 @@ export class OrderService {
       }
     } catch (error) {
       console.error("Failed to send assignment notifications:", error);
-      // Don't throw error - email failure shouldn't break order creation
     }
   }
 }
