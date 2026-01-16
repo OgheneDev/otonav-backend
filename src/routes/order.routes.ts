@@ -64,4 +64,11 @@ router.get(
   orderController.getCustomerLocationLabels.bind(orderController)
 );
 
+// CONFIRM DELIVERY - Rider only
+router.post(
+  "/:orderId/confirm-delivery",
+  authorizeRole(["rider"]),
+  orderController.confirmDelivery.bind(orderController)
+);
+
 export const orderRoutes = router;

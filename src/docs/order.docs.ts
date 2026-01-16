@@ -106,7 +106,7 @@
  *           nullable: true
  *         status:
  *           type: string
- *           enum: [assigned, rider_accepted, customer_location_set, cancelled, delivered]
+ *           enum: [pending, rider_accepted, customer_location_set, confirmed, delivered, cancelled]
  *         assignedAt:
  *           type: string
  *           format: date-time
@@ -116,6 +116,10 @@
  *           format: date-time
  *           nullable: true
  *         customerLocationSetAt:
+ *           type: string
+ *           format: date-time
+ *           nullable: true
+ *         deliveredAt:
  *           type: string
  *           format: date-time
  *           nullable: true
@@ -220,7 +224,7 @@
  *       **Business Logic:**
  *       1. Verifies customer exists and is verified
  *       2. Verifies rider belongs to same organization
- *       3. Creates order with status "assigned"
+ *       3. Creates order with status "pending"
  *       4. Sends email notifications to customer and rider
  *
  *       **Note:** Organization context must be set in user's session via `x-org-id` header.
@@ -304,7 +308,7 @@
 
 /**
  * @swagger
- * /api/orders/{orderId}:
+ * /orders/{orderId}:
  *   get:
  *     tags: [Orders]
  *     summary: Get single order by ID
@@ -355,7 +359,7 @@
 
 /**
  * @swagger
- * /api/orders/{orderId}/cancel:
+ * /orders/{orderId}/cancel:
  *   delete:
  *     tags: [Orders]
  *     summary: Cancel an order
@@ -368,7 +372,7 @@
  *
  *       **Permissions:** `customer`, `owner`, or `rider` role
  *
- *       **Status Restrictions:** Only orders with status "pending", "assigned", or "rider_accepted" can be cancelled.
+ *       **Status Restrictions:** Orders can be cancelled from any state except "delivered".
  *
  *       **Middleware Chain:**
  *       1. `authenticateToken` - Validates JWT token
@@ -396,7 +400,7 @@
  *           Cannot cancel:
  *             value:
  *               success: false
- *               message: "Order cannot be cancelled in its current state"
+ *               message: "Delivered orders cannot be cancelled"
  *           Rider permission:
  *             value:
  *               success: false
@@ -411,7 +415,7 @@
 
 /**
  * @swagger
- * /api/orders/{orderId}/accept:
+ * /orders/{orderId}/accept:
  *   post:
  *     tags: [Orders]
  *     summary: Rider accept order
@@ -419,14 +423,18 @@
  *       Rider accepts an assigned order and provides current location.
  *
  *       **Permissions:** `rider` role in current organization
- *       **Order Status:** Must be "assigned"
+ *       **Order Status:** Must be "pending" or "customer_location_set"
  *
  *       **Middleware Chain:**
  *       1. `authenticateToken` - Validates JWT token
  *       2. `authorizeRole(["rider"])` - Verifies user is rider in org context
  *
+ *       **Status Transitions:**
+ *       - If order is "pending" → becomes "rider_accepted"
+ *       - If order is "customer_location_set" → becomes "confirmed"
+ *
  *       **Actions:**
- *       1. Updates order status to "rider_accepted"
+ *       1. Updates order status based on current state
  *       2. Sets rider's current location in order
  *       3. Updates rider's location in user profile
  *     security:
@@ -465,10 +473,10 @@
  *             value:
  *               success: false
  *               message: "Current location is required"
- *           Order not assigned:
+ *           Order not in correct state:
  *             value:
  *               success: false
- *               message: "Order not found or not assigned to this rider"
+ *               message: "Order not found or not in a state that can be accepted"
  *       401:
  *         $ref: '#/components/responses/UnauthorizedError'
  *       403:
@@ -477,19 +485,23 @@
 
 /**
  * @swagger
- * /api/orders/{orderId}/set-location:
+ * /orders/{orderId}/set-location:
  *   post:
  *     tags: [Orders]
  *     summary: Customer set delivery location
  *     description: |
- *       Customer sets their delivery location after rider has accepted.
+ *       Customer sets their delivery location.
  *
  *       **Permissions:** `customer` role (global, no org context)
- *       **Order Status:** Must be "rider_accepted"
+ *       **Order Status:** Must be "pending" or "rider_accepted"
  *
  *       **Middleware Chain:**
  *       1. `authenticateToken` - Validates JWT token
  *       2. `authorizeRole(["customer"])` - Verifies user is customer
+ *
+ *       **Status Transitions:**
+ *       - If order is "pending" → becomes "customer_location_set"
+ *       - If order is "rider_accepted" → becomes "confirmed"
  *
  *       **Note:** No organization context required for customers.
  *     security:
@@ -522,10 +534,10 @@
  *             value:
  *               success: false
  *               message: "Location label is required"
- *           Rider not accepted:
+ *           Order not in correct state:
  *             value:
  *               success: false
- *               message: "Order not found or rider hasn't accepted yet"
+ *               message: "Order not found or not in a state that can have location set"
  *       401:
  *         $ref: '#/components/responses/UnauthorizedError'
  *       403:
@@ -534,7 +546,7 @@
 
 /**
  * @swagger
- * /api/orders/{orderId}/set-customer-location:
+ * /orders/{orderId}/set-customer-location:
  *   post:
  *     tags: [Orders]
  *     summary: Owner set customer location
@@ -542,16 +554,20 @@
  *       Owner sets customer location from customer's saved locations.
  *
  *       **Permissions:** `owner` role in current organization
- *       **Order Status:** Must be "rider_accepted"
+ *       **Order Status:** Must be "pending" or "rider_accepted"
  *
  *       **Middleware Chain:**
  *       1. `authenticateToken` - Validates JWT token
  *       2. `authorizeRole(["owner"])` - Verifies user is owner in org context
  *
+ *       **Status Transitions:**
+ *       - If order is "pending" → becomes "customer_location_set"
+ *       - If order is "rider_accepted" → becomes "confirmed"
+ *
  *       **Flow:**
  *       1. Validates location label exists in customer's saved locations
  *       2. Uses precise location from customer's saved data
- *       3. Updates order status to "customer_location_set"
+ *       3. Updates order status based on current state
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -594,7 +610,7 @@
 
 /**
  * @swagger
- * /api/orders/{orderId}/customer-location-labels:
+ * /orders/{orderId}/customer-location-labels:
  *   get:
  *     tags: [Orders]
  *     summary: Get customer's saved location labels
@@ -641,4 +657,107 @@
  *         $ref: '#/components/responses/ForbiddenError'
  *       404:
  *         $ref: '#/components/responses/OrderNotFoundError'
+ */
+
+/**
+ * @swagger
+ * /orders/{orderId}/confirm-delivery:
+ *   post:
+ *     tags: [Orders]
+ *     summary: Rider confirm delivery
+ *     description: |
+ *       Rider confirms that package has been delivered to its destination.
+ *
+ *       **Permissions:** `rider` role in current organization
+ *       **Order Status:** Must be "confirmed"
+ *
+ *       **Middleware Chain:**
+ *       1. `authenticateToken` - Validates JWT token
+ *       2. `authorizeRole(["rider"])` - Verifies user is rider in org context
+ *
+ *       **Flow:**
+ *       1. Updates order status to "delivered"
+ *       2. Sets delivery timestamp
+ *       3. Marks order as completed
+ *
+ *       **Note:** This is the final step in the order lifecycle.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: orderId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Order ID
+ *     responses:
+ *       200:
+ *         description: Delivery confirmed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       400:
+ *         $ref: '#/components/responses/BadRequestError'
+ *         examples:
+ *           Order not confirmed:
+ *             value:
+ *               success: false
+ *               message: "Order not found or not confirmed"
+ *       401:
+ *         $ref: '#/components/responses/UnauthorizedError'
+ *       403:
+ *         $ref: '#/components/responses/ForbiddenError'
+ */
+
+/**
+ * @swagger
+ * components:
+ *   schemas:
+ *     OrderStatusFlow:
+ *       type: object
+ *       description: |
+ *         Order Status Flow Diagram:
+ *
+ *                                  ┌──────────────┐
+ *                                  │   pending    │ ◄───── Order created
+ *                                  └──────┬───────┘
+ *                                         │
+ *                         ┌───────────────┴───────────────┐
+ *                         │                               │
+ *                  Rider accepts                   Customer sets
+ *                  (with location)                location
+ *                         │                               │
+ *                         ▼                               ▼
+ *                  ┌──────────────┐             ┌────────────────────┐
+ *                  │rider_accepted│             │customer_location_set│
+ *                  └──────┬───────┘             └─────────┬──────────┘
+ *                         │                               │
+ *                    Customer sets                   Rider accepts
+ *                    location                        (with location)
+ *                         │                               │
+ *                         └──────────────┬────────────────┘
+ *                                        ▼
+ *                                ┌──────────────┐
+ *                                │  confirmed   │ ◄───── Both conditions met
+ *                                └──────┬───────┘
+ *                                       │
+ *                                  Rider confirms
+ *                                   delivery
+ *                                       │
+ *                                       ▼
+ *                                ┌──────────────┐
+ *                                │  delivered   │ ◄───── Order completed
+ *                                └──────────────┘
+ *
+ *         Cancellation Flow:
+ *         - Orders can be cancelled from any state except "delivered"
+ *         - Cancellation sets status to "cancelled"
+ *
+ *         Key Points:
+ *         1. Order starts as "pending"
+ *         2. Becomes "confirmed" when BOTH rider accepts AND customer location is set
+ *         3. Only "confirmed" orders can be marked as "delivered"
+ *         4. Orders cannot be cancelled once delivered
  */

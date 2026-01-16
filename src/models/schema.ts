@@ -34,10 +34,9 @@ export const auditSeverityEnum = pgEnum("audit_severity", [
 
 export const orderStatusEnum = pgEnum("order_status", [
   "pending",
-  "assigned",
   "rider_accepted",
   "customer_location_set",
-  "in_transit",
+  "confirmed",
   "delivered",
   "cancelled",
 ]);
