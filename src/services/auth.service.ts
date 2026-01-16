@@ -1558,6 +1558,78 @@ export const createCustomerAccount = async (
 };
 
 /**
+ * Resend Customer Registration Link
+ */
+export const resendCustomerRegistrationLink = async (
+  ownerId: string,
+  orgId: string,
+  customerId: string
+) => {
+  const owner = await db.query.users.findFirst({
+    where: eq(users.id, ownerId),
+  });
+
+  const ownerMembership = await db.query.userOrganizations.findFirst({
+    where: and(
+      eq(userOrganizations.userId, ownerId),
+      eq(userOrganizations.orgId, orgId),
+      eq(userOrganizations.role, "owner")
+    ),
+  });
+
+  if (!owner || !ownerMembership) {
+    throw new Error("Unauthorized");
+  }
+
+  const customer = await db.query.users.findFirst({
+    where: and(
+      eq(users.id, customerId),
+      eq(users.role, "customer"),
+      eq(users.emailVerified, false)
+    ),
+  });
+
+  if (!customer) {
+    throw new Error("Customer not found or already verified");
+  }
+
+  const org = await db.query.organizations.findFirst({
+    where: eq(organizations.id, orgId),
+  });
+
+  // Generate new registration token
+  const token = generateRegistrationToken(
+    customer.email,
+    "", // No orgId for customers
+    "customer",
+    customer.name || undefined
+  );
+
+  const registrationLink = getRegistrationLink(token, "customer");
+
+  // Update customer with new token
+  await db
+    .update(users)
+    .set({
+      registrationToken: token,
+      registrationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    })
+    .where(eq(users.id, customerId));
+
+  // Send email
+  await sendCustomerRegistrationLinkEmail(
+    customer.email,
+    registrationLink,
+    org!.name
+  );
+
+  return {
+    success: true,
+    message: `Registration link resent to ${customer.email}`,
+  };
+};
+
+/**
  * Complete Customer Registration via Token (Public)
  */
 export const completeCustomerRegistrationViaToken = async (

@@ -20,6 +20,7 @@ import {
   resendVerificationOTP,
   cancelRiderInvitation,
   resendRiderInvitation,
+  resendCustomerRegistrationLink,
 } from "../services/auth.service.js";
 
 // Helper functions
@@ -655,6 +656,44 @@ export const createCustomerAccountController = async (
       },
       "Customer registration link sent successfully"
     );
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+/**
+ * Resend Customer Registration Link
+ */
+export const resendCustomerRegistrationLinkController = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const userId = (req as any).user?.userId;
+    const orgId = (req as any).user?.orgId;
+    const { customerId } = req.body;
+
+    if (!userId || !orgId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    if (!customerId) {
+      return res.status(400).json({
+        success: false,
+        message: "Customer ID is required",
+      });
+    }
+
+    const result = await resendCustomerRegistrationLink(
+      userId,
+      orgId,
+      customerId
+    );
+
+    return successResponse(res, result, result.message);
   } catch (error) {
     return handleError(res, error);
   }

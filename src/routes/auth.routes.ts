@@ -1,4 +1,3 @@
-// routes/auth.routes.ts
 import express from "express";
 import {
   registerBusinessController,
@@ -20,15 +19,16 @@ import {
   resetPasswordController,
   resendRiderInvitationController,
   cancelRiderInvitationController,
+  resendCustomerRegistrationLinkController,
 } from "../controllers/auth.controller.js";
 import {
   authenticateToken,
-  requireOrgContext, // ADD THIS
-  requireOrgMember, // ADD THIS
+  requireOrgContext,
+  requireOrgMember,
 } from "../middleware/auth.middleware.js";
 import {
   authorizeRole,
-  requireOrgOwner, // ADD THIS - more specific
+  requireOrgOwner,
 } from "../middleware/role.middleware.js";
 
 const router = express.Router();
@@ -77,6 +77,16 @@ router.post(
   requireOrgMember, // NEW: Ensure user belongs to org
   requireOrgOwner, // NEW: More specific than authorizeRole(["owner"])
   createCustomerAccountController
+);
+
+// Add with the other owner routes:
+router.post(
+  "/customer/resend-invitation",
+  authenticateToken,
+  requireOrgContext,
+  requireOrgMember,
+  requireOrgOwner,
+  resendCustomerRegistrationLinkController
 );
 
 router.post(
