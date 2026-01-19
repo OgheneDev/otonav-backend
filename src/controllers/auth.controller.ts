@@ -1,4 +1,3 @@
-// controllers/auth.controller.ts - Fix the orgId references
 import { Request, Response } from "express";
 import {
   registerBusiness,
@@ -36,7 +35,7 @@ const handleError = (res: Response, error: any) => {
 const successResponse = (
   res: Response,
   data: any,
-  message: string = "Success"
+  message: string = "Success",
 ) => {
   return res.status(200).json({
     success: true,
@@ -50,7 +49,7 @@ const successResponse = (
  */
 export const registerBusinessController = async (
   req: Request,
-  res: Response
+  res: Response,
 ) => {
   try {
     const { email, password, name, phoneNumber, businessName } = req.body;
@@ -68,7 +67,7 @@ export const registerBusinessController = async (
       password,
       name,
       businessName,
-      phoneNumber
+      phoneNumber,
     );
 
     return successResponse(
@@ -79,8 +78,8 @@ export const registerBusinessController = async (
           email: result.user.email,
           name: result.user.name,
           role: result.user.role,
-          // REMOVED: orgId: result.user.orgId, (field no longer exists in users table)
           emailVerified: result.user.emailVerified,
+          registrationStatus: result.user.registrationStatus,
           otp: result.otp,
         },
         organization: {
@@ -88,7 +87,7 @@ export const registerBusinessController = async (
           name: result.org.name,
         },
       },
-      "Business registration successful. Please check your email for OTP to verify your account."
+      "Business registration successful. Please check your email for OTP to verify your account.",
     );
   } catch (error) {
     return handleError(res, error);
@@ -100,7 +99,7 @@ export const registerBusinessController = async (
  */
 export const registerCustomerController = async (
   req: Request,
-  res: Response
+  res: Response,
 ) => {
   try {
     const { email, password, name, phoneNumber } = req.body;
@@ -122,9 +121,11 @@ export const registerCustomerController = async (
         name: customer.name,
         role: customer.role,
         emailVerified: customer.emailVerified,
+        registrationStatus: customer.registrationStatus,
+        isProfileComplete: customer.isProfileComplete, // NEW
         otp: customer.otp,
       },
-      "Customer registration successful. Please check your email for OTP to verify your account."
+      "Customer registration successful. Please check your email for OTP to verify your account.",
     );
   } catch (error) {
     return handleError(res, error);
@@ -167,13 +168,20 @@ export const loginController = async (req: Request, res: Response) => {
         name: result.user.name,
         role: result.user.role, // Global role
         emailVerified: result.user.emailVerified,
-        registrationCompleted: result.user.registrationCompleted,
+        registrationStatus: result.user.registrationStatus,
         phoneNumber: result.user.phoneNumber,
         organizations: userOrgs, // Include user's organizations
       },
       accessToken: result.accessToken,
       expiresIn: 7 * 24 * 60 * 60,
     };
+
+    // Add location data based on role
+    if (result.user.role === "customer") {
+      responseData.user.locations = result.user.locations || [];
+    } else if (result.user.role === "rider") {
+      responseData.user.currentLocation = result.user.currentLocation;
+    }
 
     // Include default org info if available
     if (defaultOrgId) {
@@ -192,7 +200,7 @@ export const loginController = async (req: Request, res: Response) => {
  */
 export const verifyEmailWithOTPController = async (
   req: Request,
-  res: Response
+  res: Response,
 ) => {
   try {
     const { email, otp } = req.body;
@@ -209,7 +217,7 @@ export const verifyEmailWithOTPController = async (
     return successResponse(
       res,
       null,
-      "Email verified successfully. You can now login."
+      "Email verified successfully. You can now login.",
     );
   } catch (error) {
     return handleError(res, error);
@@ -260,7 +268,7 @@ export const refreshTokenController = async (req: Request, res: Response) => {
         accessToken: result.accessToken,
         expiresIn: 7 * 24 * 60 * 60,
       },
-      "Token refreshed successfully"
+      "Token refreshed successfully",
     );
   } catch (error) {
     return handleError(res, error);
@@ -292,7 +300,7 @@ export const logoutController = async (req: Request, res: Response) => {
 };
 
 /**
- * Get Current User Profile
+ * Get Current User Profile - UPDATED to return location data based on role
  */
 export const getProfileController = async (req: Request, res: Response) => {
   try {
@@ -347,14 +355,14 @@ export const updateProfileController = async (req: Request, res: Response) => {
     ];
 
     const invalidFields = Object.keys(updates).filter(
-      (field) => !allowedFields.includes(field)
+      (field) => !allowedFields.includes(field),
     );
 
     if (invalidFields.length > 0) {
       return res.status(400).json({
         success: false,
         message: `Invalid fields: ${invalidFields.join(
-          ", "
+          ", ",
         )}. Allowed fields: ${allowedFields.join(", ")}`,
       });
     }
@@ -387,21 +395,31 @@ export const updateProfileController = async (req: Request, res: Response) => {
 
     const updatedUser = await updateUserProfile(userId, updates);
 
+    // Build response with appropriate location data
+    const responseData: any = {
+      id: updatedUser.id,
+      email: updatedUser.email,
+      name: updatedUser.name,
+      phoneNumber: updatedUser.phoneNumber,
+      role: updatedUser.role,
+      emailVerified: updatedUser.emailVerified,
+      registrationStatus: updatedUser.registrationStatus,
+      isProfileComplete: updatedUser.isProfileComplete, // NEW
+    };
+
+    // Add location data based on role
+    if (updatedUser.role === "customer") {
+      responseData.locations = updatedUser.locations || [];
+    } else if (updatedUser.role === "rider") {
+      responseData.currentLocation = updatedUser.currentLocation;
+    }
+
     return successResponse(
       res,
-      {
-        id: updatedUser.id,
-        email: updatedUser.email,
-        name: updatedUser.name,
-        phoneNumber: updatedUser.phoneNumber,
-        locations: updatedUser.locations, // Return the locations array
-        currentLocation: updatedUser.currentLocation, // For riders
-        role: updatedUser.role,
-        emailVerified: updatedUser.emailVerified,
-      },
+      responseData,
       updates.email
         ? "Profile updated successfully. Please check your email for OTP to verify your new email address."
-        : "Profile updated successfully"
+        : "Profile updated successfully",
     );
   } catch (error) {
     return handleError(res, error);
@@ -413,7 +431,7 @@ export const updateProfileController = async (req: Request, res: Response) => {
  */
 export const createRiderAccountController = async (
   req: Request,
-  res: Response
+  res: Response,
 ) => {
   try {
     const userId = (req as any).user?.userId;
@@ -438,7 +456,7 @@ export const createRiderAccountController = async (
       userId,
       orgId,
       riderEmail,
-      riderName
+      riderName,
     );
 
     let message = "Rider invitation sent successfully";
@@ -455,7 +473,7 @@ export const createRiderAccountController = async (
         emailType: result.emailType,
         token: result.token,
       },
-      message
+      message,
     );
   } catch (error) {
     return handleError(res, error);
@@ -467,7 +485,7 @@ export const createRiderAccountController = async (
  */
 export const completeRiderRegistrationViaTokenController = async (
   req: Request,
-  res: Response
+  res: Response,
 ) => {
   try {
     const { token, password, phoneNumber } = req.body;
@@ -489,7 +507,7 @@ export const completeRiderRegistrationViaTokenController = async (
     const rider = await completeRiderRegistrationViaToken(
       token,
       password,
-      phoneNumber
+      phoneNumber,
     );
 
     return successResponse(
@@ -499,11 +517,10 @@ export const completeRiderRegistrationViaTokenController = async (
         email: rider.email,
         name: rider.name,
         role: rider.role,
-        // REMOVED: orgId: rider.orgId, (field no longer exists in response)
         emailVerified: rider.emailVerified,
-        registrationCompleted: rider.registrationCompleted,
+        registrationStatus: rider.registrationStatus,
       },
-      "Registration completed. Please check your email for OTP to verify your account."
+      "Registration completed. Please check your email for OTP to verify your account.",
     );
   } catch (error) {
     return handleError(res, error);
@@ -515,7 +532,7 @@ export const completeRiderRegistrationViaTokenController = async (
  */
 export const acceptInvitationController = async (
   req: Request,
-  res: Response
+  res: Response,
 ) => {
   try {
     const { token } = req.body;
@@ -536,9 +553,8 @@ export const acceptInvitationController = async (
         email: result.email,
         name: result.name,
         role: result.role,
-        // REMOVED: orgId: result.orgId, (field no longer exists in response)
       },
-      "Invitation accepted successfully. You are now part of the organization."
+      "Invitation accepted successfully. You are now part of the organization.",
     );
   } catch (error) {
     return handleError(res, error);
@@ -550,7 +566,7 @@ export const acceptInvitationController = async (
  */
 export const resendRiderInvitationController = async (
   req: Request,
-  res: Response
+  res: Response,
 ) => {
   try {
     const userId = (req as any).user?.userId;
@@ -584,7 +600,7 @@ export const resendRiderInvitationController = async (
  */
 export const cancelRiderInvitationController = async (
   req: Request,
-  res: Response
+  res: Response,
 ) => {
   try {
     const userId = (req as any).user?.userId;
@@ -618,7 +634,7 @@ export const cancelRiderInvitationController = async (
  */
 export const createCustomerAccountController = async (
   req: Request,
-  res: Response
+  res: Response,
 ) => {
   try {
     const userId = (req as any).user?.userId;
@@ -643,7 +659,7 @@ export const createCustomerAccountController = async (
       userId,
       orgId,
       customerEmail,
-      customerName
+      customerName,
     );
 
     return successResponse(
@@ -654,7 +670,7 @@ export const createCustomerAccountController = async (
         emailSent: result.emailSent,
         token: result.token,
       },
-      "Customer registration link sent successfully"
+      "Customer registration link sent successfully",
     );
   } catch (error) {
     return handleError(res, error);
@@ -666,7 +682,7 @@ export const createCustomerAccountController = async (
  */
 export const resendCustomerRegistrationLinkController = async (
   req: Request,
-  res: Response
+  res: Response,
 ) => {
   try {
     const userId = (req as any).user?.userId;
@@ -690,7 +706,7 @@ export const resendCustomerRegistrationLinkController = async (
     const result = await resendCustomerRegistrationLink(
       userId,
       orgId,
-      customerId
+      customerId,
     );
 
     return successResponse(res, result, result.message);
@@ -704,10 +720,10 @@ export const resendCustomerRegistrationLinkController = async (
  */
 export const completeCustomerRegistrationViaTokenController = async (
   req: Request,
-  res: Response
+  res: Response,
 ) => {
   try {
-    const { token, password, name, phoneNumber } = req.body; // Add phoneNumber
+    const { token, password, name, phoneNumber } = req.body;
 
     if (!token || !password) {
       return res.status(400).json({
@@ -726,8 +742,8 @@ export const completeCustomerRegistrationViaTokenController = async (
     const customer = await completeCustomerRegistrationViaToken(
       token,
       password,
-      phoneNumber, // Pass phoneNumber
-      name
+      phoneNumber,
+      name,
     );
 
     return successResponse(
@@ -738,10 +754,10 @@ export const completeCustomerRegistrationViaTokenController = async (
         name: customer.name,
         role: customer.role,
         emailVerified: customer.emailVerified,
-        registrationCompleted: customer.registrationCompleted,
-        phoneNumber: customer.phoneNumber, // Include in response
+        registrationStatus: customer.registrationStatus,
+        phoneNumber: customer.phoneNumber,
       },
-      "Registration completed. Please check your email for OTP to verify your account."
+      "Registration completed. Please check your email for OTP to verify your account.",
     );
   } catch (error) {
     return handleError(res, error);
@@ -780,7 +796,7 @@ export const updatePasswordController = async (req: Request, res: Response) => {
     const updatedUser = await updateUserPassword(
       userId,
       currentPassword,
-      newPassword
+      newPassword,
     );
 
     return successResponse(
@@ -790,7 +806,7 @@ export const updatePasswordController = async (req: Request, res: Response) => {
         email: updatedUser.email,
         name: updatedUser.name,
       },
-      "Password updated successfully"
+      "Password updated successfully",
     );
   } catch (error) {
     return handleError(res, error);
@@ -816,7 +832,7 @@ export const forgotPasswordController = async (req: Request, res: Response) => {
     return successResponse(
       res,
       null,
-      "If an account exists with this email, you will receive a password reset OTP."
+      "If an account exists with this email, you will receive a password reset OTP.",
     );
   } catch (error) {
     return handleError(res, error);
@@ -853,7 +869,7 @@ export const resetPasswordController = async (req: Request, res: Response) => {
         email: updatedUser.email,
         name: updatedUser.name,
       },
-      "Password reset successful. You can now login with your new password."
+      "Password reset successful. You can now login with your new password.",
     );
   } catch (error) {
     return handleError(res, error);
@@ -865,7 +881,7 @@ export const resetPasswordController = async (req: Request, res: Response) => {
  */
 export const switchOrganizationController = async (
   req: Request,
-  res: Response
+  res: Response,
 ) => {
   try {
     const user = (req as any).user;
@@ -893,7 +909,7 @@ export const switchOrganizationController = async (
         message: "Organization switching functionality to be implemented",
         requestedOrgId: orgId,
       },
-      "Organization switching endpoint"
+      "Organization switching endpoint",
     );
   } catch (error) {
     return handleError(res, error);

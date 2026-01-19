@@ -69,7 +69,7 @@ export const userOrganizations = pgTable("user_organizations", {
 
   // Status within this organization - UPDATED
   registrationStatus: registrationStatusEnum("registration_status").default(
-    "completed"
+    "completed",
   ),
   invitedAt: timestamp("invited_at").defaultNow(),
   invitationSentAt: timestamp("invitation_sent_at"),
@@ -103,6 +103,8 @@ export const users = pgTable("users", {
       }>
     >()
     .default([]),
+
+  isProfileComplete: boolean("is_profile_complete").default(false).notNull(),
 
   // For riders, store their current real-time location
   currentLocation: text("current_location"),

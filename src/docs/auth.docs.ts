@@ -333,18 +333,28 @@
  *           format: email
  *         name:
  *           type: string
+ *           nullable: true
  *         role:
  *           type: string
  *           enum: [owner, rider, customer]
  *         emailVerified:
  *           type: boolean
- *         registrationCompleted:
+ *         registrationStatus:
+ *           type: string
+ *           enum: [pending, completed, cancelled, expired]
+ *           description: Registration status (replaces registrationCompleted)
+ *         isProfileComplete:
  *           type: boolean
+ *           description: |
+ *             Profile completion status:
+ *             - For customers: true if they have at least one location saved
+ *             - For riders/owners: true when registrationStatus is "completed"
  *         phoneNumber:
  *           type: string
  *           nullable: true
  *         locations:
  *           type: array
+ *           description: Customer saved locations (only for customers)
  *           items:
  *             type: object
  *             properties:
@@ -355,7 +365,7 @@
  *         currentLocation:
  *           type: string
  *           nullable: true
- *           description: For riders only
+ *           description: For riders only - real-time location
  *         createdAt:
  *           type: string
  *           format: date-time
@@ -415,13 +425,18 @@
  *                   example: "owner"
  *                 emailVerified:
  *                   type: boolean
- *                 registrationCompleted:
+ *                 registrationStatus:
+ *                   type: string
+ *                   example: "completed"
+ *                 isProfileComplete:
  *                   type: boolean
+ *                   description: Profile completion status
  *                 phoneNumber:
  *                   type: string
  *                   nullable: true
  *                 locations:
  *                   type: array
+ *                   description: Customer saved locations (only for customers)
  *                   items:
  *                     type: object
  *                     properties:
@@ -432,6 +447,7 @@
  *                 currentLocation:
  *                   type: string
  *                   nullable: true
+ *                   description: Rider current location (only for riders)
  *                 organizations:
  *                   type: array
  *                   items:
@@ -461,7 +477,7 @@
  *           example: true
  *         message:
  *           type: string
- *           example: "Business registration successful"
+ *           example: "Business registration successful. Please check your email for OTP to verify your account."
  *         data:
  *           type: object
  *           properties:
@@ -484,6 +500,9 @@
  *                 registrationStatus:
  *                   type: string
  *                   enum: [pending, completed, cancelled, expired]
+ *                 isProfileComplete:
+ *                   type: boolean
+ *                   description: Profile completion status
  *                 otp:
  *                   type: string
  *                   description: OTP for email verification (testing only)
@@ -495,6 +514,41 @@
  *                   format: uuid
  *                 name:
  *                   type: string
+ *
+ *     CustomerRegistrationResponse:
+ *       type: object
+ *       properties:
+ *         success:
+ *           type: boolean
+ *           example: true
+ *         message:
+ *           type: string
+ *           example: "Customer registration successful. Please check your email for OTP to verify your account."
+ *         data:
+ *           type: object
+ *           properties:
+ *             id:
+ *               type: string
+ *               format: uuid
+ *             email:
+ *               type: string
+ *               format: email
+ *             name:
+ *               type: string
+ *             role:
+ *               type: string
+ *               example: "customer"
+ *             emailVerified:
+ *               type: boolean
+ *             registrationStatus:
+ *               type: string
+ *               enum: [pending, completed, cancelled, expired]
+ *             isProfileComplete:
+ *               type: boolean
+ *               description: Profile completion status
+ *             otp:
+ *               type: string
+ *               description: OTP for email verification (only for testing)
  *
  *     RiderCreationResponse:
  *       type: object
@@ -657,6 +711,7 @@
  *       - Organization is created with the provided business name
  *       - User is added to user_organizations as owner of the new org
  *       - JWT token will include organizations array
+ *       - isProfileComplete will be false initially
  *     security: []
  *     requestBody:
  *       required: true
@@ -691,6 +746,7 @@
  *       - Have registrationStatus "pending" until email verification
  *       - Do NOT belong to any organization (no entry in user_organizations)
  *       - Are independent users who can order from multiple businesses
+ *       - isProfileComplete will be false until they add at least one location
  *     security: []
  *     requestBody:
  *       required: true
@@ -704,36 +760,7 @@
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Customer registration successful. Please check your email for OTP to verify your account."
- *                 data:
- *                   type: object
- *                   properties:
- *                     id:
- *                       type: string
- *                       format: uuid
- *                     email:
- *                       type: string
- *                       format: email
- *                     name:
- *                       type: string
- *                     role:
- *                       type: string
- *                       example: "customer"
- *                     emailVerified:
- *                       type: boolean
- *                     registrationStatus:
- *                       type: string
- *                       enum: [pending, completed, cancelled, expired]
- *                     otp:
- *                       type: string
- *                       description: OTP for email verification (only for testing)
+ *               $ref: '#/components/schemas/CustomerRegistrationResponse'
  *       400:
  *         description: Bad request
  *         content:
@@ -755,6 +782,9 @@
  *       - orgId (if user has exactly one organization)
  *       - organizations array (list of all org memberships)
  *       Response includes user's organizations for UI to show organization switcher
+ *       Response includes isProfileComplete field based on user role:
+ *       - Customers: true if they have at least one saved location
+ *       - Riders/Owners: true when registrationStatus is "completed"
  *
  *       **Important**: If email is not verified, a new OTP will be sent and login will fail.
  *     security: []
@@ -800,6 +830,7 @@
  *       Public endpoint - No authentication required
  *       Verifies email and updates registrationStatus to "completed"
  *       Clears OTP from database after successful verification
+ *       Note: isProfileComplete status may remain false for customers without locations
  *     security: []
  *     requestBody:
  *       required: true
@@ -1033,6 +1064,11 @@
  *     description: |
  *       Protected endpoint - Returns user profile WITHOUT organizations.
  *       Use separate organization endpoints to get user's organizations.
+ *       Returns different data based on user role:
+ *       - Customers: locations array
+ *       - Riders: currentLocation
+ *       - Owners: neither location field
+ *       Always includes isProfileComplete field
  *     security:
  *       - bearerAuth: []
  *     responses:
@@ -1069,6 +1105,10 @@
  *       - Remove location by index or label
  *       - Update location by index
  *
+ *       **Important**: When updating locations for customers, isProfileComplete is automatically updated:
+ *       - Set to true if customer has at least one location
+ *       - Set to false if customer has no locations
+ *
  *       If email is changed, sends verification OTP and sets emailVerified to false
  *     security:
  *       - bearerAuth: []
@@ -1103,6 +1143,7 @@
  *                       format: email
  *                     name:
  *                       type: string
+ *                       nullable: true
  *                     phoneNumber:
  *                       type: string
  *                       nullable: true
@@ -1122,6 +1163,12 @@
  *                       type: string
  *                     emailVerified:
  *                       type: boolean
+ *                     registrationStatus:
+ *                       type: string
+ *                       enum: [pending, completed, cancelled, expired]
+ *                     isProfileComplete:
+ *                       type: boolean
+ *                       description: Profile completion status
  *       400:
  *         description: Bad request
  *         content:
@@ -1363,6 +1410,7 @@
  *       4. Sends OTP for email verification
  *
  *       Note: Rider's global role becomes "rider"
+ *       Note: isProfileComplete will be true (registrationStatus = completed for non-customers)
  *     security: []
  *     requestBody:
  *       required: true
@@ -1400,11 +1448,12 @@
  *                       example: "rider"
  *                     emailVerified:
  *                       type: boolean
- *                     registrationCompleted:
- *                       type: boolean
  *                     registrationStatus:
  *                       type: string
  *                       enum: [pending, completed, cancelled, expired]
+ *                     isProfileComplete:
+ *                       type: boolean
+ *                       description: Profile completion status (true for riders when registration is completed)
  *                     otp:
  *                       type: string
  *                       description: OTP for email verification (only for testing)
@@ -1434,6 +1483,7 @@
  *       3. User can now work with multiple organizations
  *
  *       Note: User's global role remains "rider"
+ *       Note: isProfileComplete remains unchanged (true if previously completed)
  *     security: []
  *     requestBody:
  *       required: true
@@ -1491,7 +1541,7 @@
  *
  *       Flow:
  *       1. Creates customer account with temporary password
- *       2. Sets registrationStatus to "pending"
+ *       2. Sets registrationStatus to "pending" and isProfileComplete to false
  *       3. Sends registration link WITHOUT orgId in token
  *       4. Customer completes registration independently
  *       5. Customer can order from any business later
@@ -1553,7 +1603,8 @@
  *       1. Validates registration token (includes email, role=customer, NO orgId)
  *       2. Sets password and optional name/phoneNumber
  *       3. Updates registrationStatus to "completed"
- *       4. Sends OTP for email verification
+ *       4. Sets isProfileComplete to false (until they add locations)
+ *       5. Sends OTP for email verification
  *
  *       Note: Customer's global role is "customer"
  *     security: []
@@ -1588,16 +1639,18 @@
  *                       format: email
  *                     name:
  *                       type: string
+ *                       nullable: true
  *                     role:
  *                       type: string
  *                       example: "customer"
  *                     emailVerified:
  *                       type: boolean
- *                     registrationCompleted:
- *                       type: boolean
  *                     registrationStatus:
  *                       type: string
  *                       enum: [pending, completed, cancelled, expired]
+ *                     isProfileComplete:
+ *                       type: boolean
+ *                       description: Profile completion status (false until locations are added)
  *                     phoneNumber:
  *                       type: string
  *                       nullable: true
@@ -1613,4 +1666,63 @@
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
+ */
+
+/**
+ * @swagger
+ * /api/auth/customer/resend-registration-link:
+ *   post:
+ *     summary: Resend customer registration link (Owner only)
+ *     tags: [Auth]
+ *     description: |
+ *       **REQUIRES ORGANIZATION CONTEXT**
+ *
+ *       Resends registration link to customer with pending status.
+ *       Only works for customers who are not yet verified.
+ *
+ *       **Middleware Chain:**
+ *       1. authenticateToken - Valid JWT
+ *       2. requireOrgContext - Token has orgId
+ *       3. requireOrgMember - User belongs to this org
+ *       4. requireOrgOwner - User is owner in this org
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - customerId
+ *             properties:
+ *               customerId:
+ *                 type: string
+ *                 format: uuid
+ *                 description: ID of the customer with pending registration
+ *                 example: "550e8400-e29b-41d4-a716-446655440000"
+ *     responses:
+ *       200:
+ *         description: Registration link resent successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Registration link resent to customer@email.com"
+ *       400:
+ *         description: Bad request
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         $ref: '#/components/responses/UnauthorizedError'
+ *       403:
+ *         $ref: '#/components/responses/ForbiddenError'
  */

@@ -43,14 +43,14 @@ export const hashPassword = async (password: string): Promise<string> => {
 
 export const comparePassword = async (
   password: string,
-  hash: string
+  hash: string,
 ): Promise<boolean> => {
   return bcrypt.compare(password, hash);
 };
 
 // --- JWT Utilities ---
 export const generateAccessToken = (
-  payload: Omit<TokenPayload, "type">
+  payload: Omit<TokenPayload, "type">,
 ): string => {
   return jwt.sign({ ...payload, type: "access" }, JWT_SECRET, {
     expiresIn: ACCESS_EXPIRES_IN,
@@ -68,7 +68,7 @@ export const generateRefreshToken = (payload: {
       type: "refresh",
     },
     JWT_SECRET,
-    { expiresIn: REFRESH_EXPIRES_IN } as SignOptions
+    { expiresIn: REFRESH_EXPIRES_IN } as SignOptions,
   );
 };
 
@@ -81,7 +81,7 @@ const generateRegistrationToken = (
   email: string,
   orgId: string = "", // Make orgId optional with a default value
   role: string,
-  name?: string // Add name parameter
+  name?: string, // Add name parameter
 ): string => {
   if (role === "customer") {
     // Customers don't belong to specific orgs, so don't include orgId
@@ -93,7 +93,7 @@ const generateRegistrationToken = (
         type: "registration",
       },
       JWT_SECRET,
-      { expiresIn: "24h" }
+      { expiresIn: "24h" },
     );
   }
 
@@ -111,14 +111,14 @@ const generateRegistrationToken = (
       type: "registration",
     },
     JWT_SECRET,
-    { expiresIn: "24h" }
+    { expiresIn: "24h" },
   );
 };
 
 const generateInvitationToken = (
   email: string,
   orgId: string,
-  role: string
+  role: string,
 ): string => {
   return jwt.sign(
     {
@@ -128,14 +128,14 @@ const generateInvitationToken = (
       type: "invitation",
     },
     JWT_SECRET,
-    { expiresIn: "7d" }
+    { expiresIn: "7d" },
   );
 };
 
 // --- Link Generation ---
 const getRegistrationLink = (
   token: string,
-  type: "rider" | "customer"
+  type: "rider" | "customer",
 ): string => {
   return `${FRONTEND_URL}/complete-registration?token=${token}&type=${type}`;
 };
@@ -153,7 +153,7 @@ const storeOTP = async (
   userId: string,
   otp: string,
   otpType: string,
-  dbClient?: any
+  dbClient?: any,
 ) => {
   const otpExpires = getOTPExpiration();
   const client = dbClient || db;
@@ -227,7 +227,7 @@ const storeOTP = async (
 const sendVerificationOTPEmail = async (
   email: string,
   otp: string,
-  name: string
+  name: string,
 ) => {
   await sendEmail({
     to: email,
@@ -282,7 +282,7 @@ const sendRiderRegistrationLinkEmail = async (
   email: string,
   registrationLink: string,
   businessName: string,
-  riderName: string
+  riderName: string,
 ) => {
   await sendEmail({
     to: email,
@@ -352,7 +352,7 @@ const sendRiderInvitationEmail = async (
   email: string,
   invitationLink: string,
   businessName: string,
-  riderName: string
+  riderName: string,
 ) => {
   await sendEmail({
     to: email,
@@ -414,7 +414,7 @@ const sendRiderInvitationEmail = async (
 const sendCustomerRegistrationLinkEmail = async (
   email: string,
   registrationLink: string,
-  businessName: string
+  businessName: string,
 ) => {
   await sendEmail({
     to: email,
@@ -466,7 +466,7 @@ const sendCustomerRegistrationLinkEmail = async (
 const sendPasswordResetOTPEmail = async (
   email: string,
   otp: string,
-  name: string
+  name: string,
 ) => {
   await sendEmail({
     to: email,
@@ -525,6 +525,21 @@ const sendPasswordResetOTPEmail = async (
 // --- Core Auth Logic ---
 
 /**
+ * Check if customer profile is complete
+ * For customers: profile is complete if they have at least one location saved
+ * For other roles: profile is complete when registrationStatus is "completed"
+ */
+const isCustomerProfileComplete = (user: any): boolean => {
+  if (user.role === "customer") {
+    // Customer profile is complete if they have at least one location
+    return Array.isArray(user.locations) && user.locations.length > 0;
+  }
+
+  // For non-customers, profile is complete when registration is completed
+  return user.registrationStatus === "completed";
+};
+
+/**
  * Register a Business (Owner)
  */
 export const registerBusiness = async (
@@ -532,7 +547,7 @@ export const registerBusiness = async (
   password: string,
   name: string,
   businessName: string,
-  phoneNumber: string
+  phoneNumber: string,
 ) => {
   const existing = await db.query.users.findFirst({
     where: eq(users.email, email),
@@ -612,7 +627,7 @@ export const registerCustomer = async (
   email: string,
   password: string,
   name: string,
-  phoneNumber: string
+  phoneNumber: string,
 ) => {
   const existing = await db.query.users.findFirst({
     where: eq(users.email, email),
@@ -630,7 +645,8 @@ export const registerCustomer = async (
       phoneNumber: phoneNumber,
       role: "customer",
       emailVerified: false,
-      registrationStatus: "pending", // Add this line
+      registrationStatus: "pending",
+      isProfileComplete: false, // NEW: Default to false
       tokenVersion: 1,
     })
     .returning();
@@ -650,7 +666,7 @@ export const registerCustomer = async (
  */
 export const verifyEmailWithOTP = async (
   email: string,
-  otp: string
+  otp: string,
 ): Promise<boolean> => {
   console.log("=== VERIFY EMAIL OTP ===");
   console.log("Timestamp:", new Date().toISOString());
@@ -708,7 +724,7 @@ export const verifyEmailWithOTP = async (
     if (user.otpType !== "verify") {
       console.log("❌ Wrong OTP type:", user.otpType);
       throw new Error(
-        "Invalid OTP type. This OTP is not for email verification."
+        "Invalid OTP type. This OTP is not for email verification.",
       );
     }
 
@@ -792,8 +808,8 @@ export const authenticateUser = async (email: string, password: string) => {
     .where(
       and(
         eq(userOrganizations.userId, user.id),
-        eq(userOrganizations.isActive, true)
-      )
+        eq(userOrganizations.isActive, true),
+      ),
     );
 
   // If user has only one organization, use it as default
@@ -818,10 +834,14 @@ export const authenticateUser = async (email: string, password: string) => {
     tokenVersion: user.tokenVersion || 1,
   });
 
+  // Calculate profile completion status
+  const profileComplete = isCustomerProfileComplete(user);
+
   return {
     user: {
       ...user,
       organizations: userOrgs,
+      isProfileComplete: profileComplete, // NEW: Add this field
     },
     accessToken,
     refreshToken,
@@ -829,29 +849,44 @@ export const authenticateUser = async (email: string, password: string) => {
 };
 
 /**
- * Get User by ID
+ * Get User by ID - UPDATED to return locations for customers and currentLocation for riders
  */
 export const getUserById = async (userId: string) => {
   const user = await db.query.users.findFirst({
     where: eq(users.id, userId),
-    columns: {
-      id: true,
-      email: true,
-      name: true,
-      role: true,
-      emailVerified: true,
-      createdAt: true,
-      lastLoginAt: true,
-      phoneNumber: true,
-      registrationCompleted: true,
-    },
   });
 
   if (!user) {
     throw new Error("User not found");
   }
 
-  return user;
+  // Calculate profile completion status
+  const profileComplete = isCustomerProfileComplete(user);
+
+  // Return different location data based on role
+  const response: any = {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    emailVerified: user.emailVerified,
+    createdAt: user.createdAt,
+    lastLoginAt: user.lastLoginAt,
+    phoneNumber: user.phoneNumber,
+    isProfileComplete: profileComplete, // NEW: Add this field
+    registrationStatus: user.registrationStatus,
+  };
+
+  // Add location data based on role
+  if (user.role === "customer") {
+    // Return locations array for customers
+    response.locations = user.locations || [];
+  } else if (user.role === "rider") {
+    // Return currentLocation for riders
+    response.currentLocation = user.currentLocation;
+  }
+
+  return response;
 };
 
 /**
@@ -861,7 +896,7 @@ export const createRiderAccount = async (
   ownerId: string,
   orgId: string,
   riderEmail: string,
-  riderName: string
+  riderName: string,
 ) => {
   const owner = await db.query.users.findFirst({
     where: eq(users.id, ownerId),
@@ -871,7 +906,7 @@ export const createRiderAccount = async (
     where: and(
       eq(userOrganizations.userId, ownerId),
       eq(userOrganizations.orgId, orgId),
-      eq(userOrganizations.role, "owner")
+      eq(userOrganizations.role, "owner"),
     ),
   });
 
@@ -903,7 +938,7 @@ export const createRiderAccount = async (
       const existingMembership = await tx.query.userOrganizations.findFirst({
         where: and(
           eq(userOrganizations.userId, existingUser.id),
-          eq(userOrganizations.orgId, orgId)
+          eq(userOrganizations.orgId, orgId),
         ),
       });
 
@@ -924,7 +959,7 @@ export const createRiderAccount = async (
         riderEmail,
         invitationLink,
         org.name,
-        riderName
+        riderName,
       );
 
       // Create pending membership for existing user
@@ -945,7 +980,7 @@ export const createRiderAccount = async (
         .set({
           invitationToken: token,
           invitationTokenExpires: new Date(
-            Date.now() + 7 * 24 * 60 * 60 * 1000
+            Date.now() + 7 * 24 * 60 * 60 * 1000,
           ),
         })
         .where(eq(users.id, existingUser.id));
@@ -967,7 +1002,6 @@ export const createRiderAccount = async (
           name: riderName,
           role: "rider",
           emailVerified: false,
-          registrationCompleted: false,
           registrationStatus: "pending",
           registrationToken: token,
           registrationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
@@ -992,7 +1026,7 @@ export const createRiderAccount = async (
         riderEmail,
         registrationLink,
         org.name,
-        riderName
+        riderName,
       );
     }
 
@@ -1032,7 +1066,7 @@ export const createRiderAccount = async (
 export const completeRiderRegistrationViaToken = async (
   token: string,
   password: string,
-  phoneNumber?: string
+  phoneNumber?: string,
 ) => {
   console.log("=== Debug: Rider Registration ===");
   console.log("Received token:", token);
@@ -1077,7 +1111,7 @@ export const completeRiderRegistrationViaToken = async (
 
   if (payload.type !== "registration") {
     throw new Error(
-      `Invalid token type. Expected "registration", got "${payload.type}"`
+      `Invalid token type. Expected "registration", got "${payload.type}"`,
     );
   }
 
@@ -1104,7 +1138,6 @@ export const completeRiderRegistrationViaToken = async (
     .set({
       password: passwordHash,
       phoneNumber: phoneNumber || null,
-      registrationCompleted: true,
       registrationStatus: "completed",
       registrationToken: null,
       registrationTokenExpires: null,
@@ -1126,8 +1159,8 @@ export const completeRiderRegistrationViaToken = async (
     .where(
       and(
         eq(userOrganizations.userId, updatedUser.id),
-        eq(userOrganizations.orgId, orgId)
-      )
+        eq(userOrganizations.orgId, orgId),
+      ),
     );
 
   await sendVerificationOTPEmail(user.email, otp, updatedUser.name || "");
@@ -1151,7 +1184,6 @@ export const completeRiderRegistrationViaToken = async (
     name: updatedUser.name,
     role: updatedUser.role,
     emailVerified: updatedUser.emailVerified,
-    registrationCompleted: updatedUser.registrationCompleted,
     registrationStatus: updatedUser.registrationStatus,
     otp: otp,
   };
@@ -1178,7 +1210,7 @@ export const acceptInvitation = async (token: string) => {
     where: and(
       eq(users.email, email),
       eq(users.invitationToken, token),
-      sql`${users.invitationTokenExpires} > NOW()`
+      sql`${users.invitationTokenExpires} > NOW()`,
     ),
   });
 
@@ -1189,7 +1221,7 @@ export const acceptInvitation = async (token: string) => {
   const existingMembership = await db.query.userOrganizations.findFirst({
     where: and(
       eq(userOrganizations.userId, user.id),
-      eq(userOrganizations.orgId, orgId)
+      eq(userOrganizations.orgId, orgId),
     ),
   });
 
@@ -1206,8 +1238,8 @@ export const acceptInvitation = async (token: string) => {
         .where(
           and(
             eq(userOrganizations.userId, user.id),
-            eq(userOrganizations.orgId, orgId)
-          )
+            eq(userOrganizations.orgId, orgId),
+          ),
         );
     } else {
       throw new Error("User already belongs to this organization");
@@ -1263,7 +1295,7 @@ export const acceptInvitation = async (token: string) => {
 export const resendRiderInvitation = async (
   ownerId: string,
   orgId: string,
-  riderId: string
+  riderId: string,
 ) => {
   const owner = await db.query.users.findFirst({
     where: eq(users.id, ownerId),
@@ -1273,7 +1305,7 @@ export const resendRiderInvitation = async (
     where: and(
       eq(userOrganizations.userId, ownerId),
       eq(userOrganizations.orgId, orgId),
-      eq(userOrganizations.role, "owner")
+      eq(userOrganizations.role, "owner"),
     ),
   });
 
@@ -1293,7 +1325,7 @@ export const resendRiderInvitation = async (
     where: and(
       eq(userOrganizations.userId, riderId),
       eq(userOrganizations.orgId, orgId),
-      eq(userOrganizations.registrationStatus, "pending")
+      eq(userOrganizations.registrationStatus, "pending"),
     ),
   });
 
@@ -1308,7 +1340,7 @@ export const resendRiderInvitation = async (
   let token;
   let emailType;
 
-  if (rider.registrationCompleted) {
+  if (rider.emailVerified && rider.registrationStatus === "completed") {
     // Existing user - resend invitation
     token = generateInvitationToken(rider.email, orgId, "rider");
     emailType = "invitation";
@@ -1316,7 +1348,7 @@ export const resendRiderInvitation = async (
       rider.email,
       getInvitationLink(token),
       org!.name,
-      rider.name || rider.email
+      rider.name || rider.email,
     );
 
     await db
@@ -1334,7 +1366,7 @@ export const resendRiderInvitation = async (
       rider.email,
       getRegistrationLink(token, "rider"),
       org!.name,
-      rider.name || rider.email
+      rider.name || rider.email,
     );
 
     await db
@@ -1355,8 +1387,8 @@ export const resendRiderInvitation = async (
     .where(
       and(
         eq(userOrganizations.userId, riderId),
-        eq(userOrganizations.orgId, orgId)
-      )
+        eq(userOrganizations.orgId, orgId),
+      ),
     );
 
   return {
@@ -1372,7 +1404,7 @@ export const resendRiderInvitation = async (
 export const cancelRiderInvitation = async (
   ownerId: string,
   orgId: string,
-  riderId: string
+  riderId: string,
 ) => {
   const owner = await db.query.users.findFirst({
     where: eq(users.id, ownerId),
@@ -1382,7 +1414,7 @@ export const cancelRiderInvitation = async (
     where: and(
       eq(userOrganizations.userId, ownerId),
       eq(userOrganizations.orgId, orgId),
-      eq(userOrganizations.role, "owner")
+      eq(userOrganizations.role, "owner"),
     ),
   });
 
@@ -1394,7 +1426,7 @@ export const cancelRiderInvitation = async (
     where: and(
       eq(userOrganizations.userId, riderId),
       eq(userOrganizations.orgId, orgId),
-      eq(userOrganizations.registrationStatus, "pending")
+      eq(userOrganizations.registrationStatus, "pending"),
     ),
   });
 
@@ -1408,15 +1440,15 @@ export const cancelRiderInvitation = async (
     .where(
       and(
         eq(userOrganizations.userId, riderId),
-        eq(userOrganizations.orgId, orgId)
-      )
+        eq(userOrganizations.orgId, orgId),
+      ),
     );
 
   const rider = await db.query.users.findFirst({
     where: and(
       eq(users.id, riderId),
-      eq(users.registrationCompleted, false),
-      eq(users.emailVerified, false)
+      eq(users.registrationStatus, "pending"),
+      eq(users.emailVerified, false),
     ),
   });
 
@@ -1445,14 +1477,14 @@ export const createCustomerAccount = async (
   ownerId: string,
   orgId: string,
   customerEmail: string,
-  customerName?: string
+  customerName?: string,
 ) => {
   // FIX: Check owner membership instead of orgId in users table
   const ownerMembership = await db.query.userOrganizations.findFirst({
     where: and(
       eq(userOrganizations.userId, ownerId),
       eq(userOrganizations.orgId, orgId),
-      eq(userOrganizations.role, "owner")
+      eq(userOrganizations.role, "owner"),
     ),
   });
 
@@ -1476,6 +1508,7 @@ export const createCustomerAccount = async (
   if (
     existingUser &&
     existingUser.emailVerified &&
+    existingUser.registrationStatus === "completed" &&
     existingUser.role === "customer"
   ) {
     throw new Error("Customer already exists and is verified");
@@ -1487,7 +1520,7 @@ export const createCustomerAccount = async (
       customerEmail,
       "", // No orgId for customers
       "customer",
-      customerName
+      customerName,
     );
     const registrationLink = getRegistrationLink(token, "customer");
 
@@ -1500,7 +1533,8 @@ export const createCustomerAccount = async (
           role: "customer",
           registrationToken: token,
           registrationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
-          registrationStatus: "pending", // Add this line
+          registrationStatus: "pending",
+          isProfileComplete: false, // NEW: Reset to false
         })
         .where(eq(users.id, existingUser.id))
         .returning();
@@ -1519,7 +1553,8 @@ export const createCustomerAccount = async (
           emailVerified: false,
           registrationToken: token,
           registrationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
-          registrationStatus: "pending", // Add this line
+          registrationStatus: "pending",
+          isProfileComplete: false, // NEW: Reset to false
           tokenVersion: 1,
         })
         .returning();
@@ -1528,7 +1563,7 @@ export const createCustomerAccount = async (
     await sendCustomerRegistrationLinkEmail(
       customerEmail,
       registrationLink,
-      org.name
+      org.name,
     );
 
     await tx.insert(auditLogs).values({
@@ -1550,7 +1585,7 @@ export const createCustomerAccount = async (
       email: customer.email,
       name: customer.name,
       emailSent: true,
-      status: "pending", // Add this line
+      status: "pending",
       token: token,
       registrationLink: registrationLink,
     };
@@ -1563,7 +1598,7 @@ export const createCustomerAccount = async (
 export const resendCustomerRegistrationLink = async (
   ownerId: string,
   orgId: string,
-  customerId: string
+  customerId: string,
 ) => {
   const owner = await db.query.users.findFirst({
     where: eq(users.id, ownerId),
@@ -1573,7 +1608,7 @@ export const resendCustomerRegistrationLink = async (
     where: and(
       eq(userOrganizations.userId, ownerId),
       eq(userOrganizations.orgId, orgId),
-      eq(userOrganizations.role, "owner")
+      eq(userOrganizations.role, "owner"),
     ),
   });
 
@@ -1585,7 +1620,7 @@ export const resendCustomerRegistrationLink = async (
     where: and(
       eq(users.id, customerId),
       eq(users.role, "customer"),
-      eq(users.emailVerified, false)
+      eq(users.emailVerified, false),
     ),
   });
 
@@ -1602,7 +1637,7 @@ export const resendCustomerRegistrationLink = async (
     customer.email,
     "", // No orgId for customers
     "customer",
-    customer.name || undefined
+    customer.name || undefined,
   );
 
   const registrationLink = getRegistrationLink(token, "customer");
@@ -1620,7 +1655,7 @@ export const resendCustomerRegistrationLink = async (
   await sendCustomerRegistrationLinkEmail(
     customer.email,
     registrationLink,
-    org!.name
+    org!.name,
   );
 
   return {
@@ -1636,7 +1671,7 @@ export const completeCustomerRegistrationViaToken = async (
   token: string,
   password: string,
   phoneNumber?: string,
-  name?: string
+  name?: string,
 ) => {
   const user = await db.query.users.findFirst({
     where: eq(users.registrationToken, token),
@@ -1676,10 +1711,10 @@ export const completeCustomerRegistrationViaToken = async (
   const updateData: any = {
     password: passwordHash,
     phoneNumber: phoneNumber || null,
-    registrationCompleted: true,
+    registrationStatus: "completed",
     registrationToken: null,
     registrationTokenExpires: null,
-    registrationStatus: "completed", // Update status to completed
+    isProfileComplete: false, // NEW: Default to false until they add locations
     otpCode: otp,
     otpExpires: otpExpires,
     otpType: "verify",
@@ -1713,8 +1748,7 @@ export const completeCustomerRegistrationViaToken = async (
     name: updatedUser.name,
     role: updatedUser.role,
     emailVerified: updatedUser.emailVerified,
-    registrationCompleted: updatedUser.registrationCompleted,
-    registrationStatus: updatedUser.registrationStatus, // Include status in response
+    registrationStatus: updatedUser.registrationStatus,
     phoneNumber: updatedUser.phoneNumber,
     otp: otp,
     token: accessToken,
@@ -1746,8 +1780,8 @@ export const refreshAccessToken = async (refreshToken: string) => {
     .where(
       and(
         eq(userOrganizations.userId, user.id),
-        eq(userOrganizations.isActive, true)
-      )
+        eq(userOrganizations.isActive, true),
+      ),
     );
 
   const defaultOrgId = userOrgs.length === 1 ? userOrgs[0].orgId : null;
@@ -1796,15 +1830,10 @@ export const updateUserProfile = async (
       label?: string;
       preciseLocation?: string;
     };
-  }
+  },
 ) => {
   const user = await db.query.users.findFirst({
     where: eq(users.id, userId),
-    columns: {
-      id: true,
-      locations: true,
-      role: true,
-    },
   });
 
   if (!user) {
@@ -1831,9 +1860,13 @@ export const updateUserProfile = async (
   const currentLocations: Array<{ label: string; preciseLocation: string }> =
     user.locations || [];
 
+  let newLocations = currentLocations;
+  let locationsChanged = false;
+
   // Option 1: Replace all locations
   if (updates.locations !== undefined) {
-    updateData.locations = updates.locations;
+    newLocations = updates.locations;
+    locationsChanged = true;
   }
   // Option 2: Add a new location
   else if (updates.addLocation) {
@@ -1844,16 +1877,17 @@ export const updateUserProfile = async (
 
     // Check for duplicate labels
     const labelExists = currentLocations.some(
-      (loc) => loc.label === newLocation.label
+      (loc) => loc.label === newLocation.label,
     );
 
     if (labelExists) {
       throw new Error(
-        `Location with label "${newLocation.label}" already exists`
+        `Location with label "${newLocation.label}" already exists`,
       );
     }
 
-    updateData.locations = [...currentLocations, newLocation];
+    newLocations = [...currentLocations, newLocation];
+    locationsChanged = true;
   }
   // Option 3: Remove a location
   else if (updates.removeLocation !== undefined) {
@@ -1862,11 +1896,11 @@ export const updateUserProfile = async (
     if (typeof updates.removeLocation === "string") {
       // Find by label
       indexToRemove = currentLocations.findIndex(
-        (loc) => loc.label === updates.removeLocation
+        (loc) => loc.label === updates.removeLocation,
       );
       if (indexToRemove === -1) {
         throw new Error(
-          `Location with label "${updates.removeLocation}" not found`
+          `Location with label "${updates.removeLocation}" not found`,
         );
       }
     } else {
@@ -1877,9 +1911,9 @@ export const updateUserProfile = async (
       }
     }
 
-    const newLocations = [...currentLocations];
+    newLocations = [...currentLocations];
     newLocations.splice(indexToRemove, 1);
-    updateData.locations = newLocations;
+    locationsChanged = true;
   }
   // Option 4: Update a location
   else if (updates.updateLocation) {
@@ -1889,12 +1923,12 @@ export const updateUserProfile = async (
       throw new Error(`Location index ${index} out of bounds`);
     }
 
-    const newLocations = [...currentLocations];
+    newLocations = [...currentLocations];
 
     // Check if new label conflicts with other locations
     if (label && label !== newLocations[index].label) {
       const labelExists = newLocations.some(
-        (loc, i) => i !== index && loc.label === label
+        (loc, i) => i !== index && loc.label === label,
       );
 
       if (labelExists) {
@@ -1910,7 +1944,16 @@ export const updateUserProfile = async (
       newLocations[index].preciseLocation = preciseLocation;
     }
 
+    locationsChanged = true;
+  }
+
+  if (locationsChanged) {
     updateData.locations = newLocations;
+
+    // Update isProfileComplete for customers based on locations
+    if (user.role === "customer") {
+      updateData.isProfileComplete = newLocations.length > 0;
+    }
   }
 
   if (updates.email) {
@@ -1945,7 +1988,7 @@ export const updateUserProfile = async (
     await sendVerificationOTPEmail(
       updates.email,
       updateData.otpCode,
-      updatedUser.name || ""
+      updatedUser.name || "",
     );
   }
 
@@ -1958,7 +2001,7 @@ export const updateUserProfile = async (
 export const updateUserPassword = async (
   userId: string,
   currentPassword: string,
-  newPassword: string
+  newPassword: string,
 ) => {
   const user = await db.query.users.findFirst({
     where: eq(users.id, userId),
@@ -2001,7 +2044,7 @@ export const updateUserPassword = async (
 export const resetPassword = async (
   email: string,
   otp: string,
-  newPassword: string
+  newPassword: string,
 ) => {
   const user = await db.query.users.findFirst({
     where: eq(users.email, email),
