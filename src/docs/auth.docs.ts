@@ -165,6 +165,70 @@
  *           description: Invitation token for existing riders to join new organizations
  *           example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
  *
+ *     # Profile Image Schemas
+ *     UpdateProfile:
+ *       type: object
+ *       properties:
+ *         name:
+ *           type: string
+ *           nullable: true
+ *           example: "John Smith"
+ *         email:
+ *           type: string
+ *           format: email
+ *           example: "newemail@example.com"
+ *         phoneNumber:
+ *           type: string
+ *           example: "+1234567890"
+ *           nullable: true
+ *         profileImage:
+ *           type: string
+ *           description: |
+ *             Base64 encoded image string (data:image/[type];base64,...) or null to remove.
+ *             Supported formats: jpeg, jpg, png, gif, webp.
+ *             Max size: 5MB.
+ *           example: "data:image/jpeg;base64,/9j/4AAQSkZJRgABA..."
+ *           nullable: true
+ *         locations:
+ *           type: array
+ *           description: Replace all locations with new array
+ *           items:
+ *             type: object
+ *             properties:
+ *               label:
+ *                 type: string
+ *                 example: "Home"
+ *               preciseLocation:
+ *                 type: string
+ *                 example: "123 Main St, City, Country"
+ *         addLocation:
+ *           type: object
+ *           description: Add a new location
+ *           properties:
+ *             label:
+ *               type: string
+ *               example: "Office"
+ *             preciseLocation:
+ *               type: string
+ *               example: "456 Work Ave, City, Country"
+ *         removeLocation:
+ *           type: string
+ *           description: Label or index of location to remove
+ *           example: "Home"
+ *         updateLocation:
+ *           type: object
+ *           description: Update location by index
+ *           properties:
+ *             index:
+ *               type: integer
+ *               example: 0
+ *             label:
+ *               type: string
+ *               example: "Updated Home"
+ *             preciseLocation:
+ *               type: string
+ *               example: "789 New St, City, Country"
+ *
  *     # Invitation Management Schemas
  *     ResendRiderInvitation:
  *       type: object
@@ -212,61 +276,6 @@
  *           type: string
  *           format: email
  *           example: "user@example.com"
- *
- *     UpdateProfile:
- *       type: object
- *       properties:
- *         name:
- *           type: string
- *           nullable: true
- *           example: "John Smith"
- *         email:
- *           type: string
- *           format: email
- *           example: "newemail@example.com"
- *         phoneNumber:
- *           type: string
- *           example: "+1234567890"
- *           nullable: true
- *         locations:
- *           type: array
- *           description: Replace all locations with new array
- *           items:
- *             type: object
- *             properties:
- *               label:
- *                 type: string
- *                 example: "Home"
- *               preciseLocation:
- *                 type: string
- *                 example: "123 Main St, City, Country"
- *         addLocation:
- *           type: object
- *           description: Add a new location
- *           properties:
- *             label:
- *               type: string
- *               example: "Office"
- *             preciseLocation:
- *               type: string
- *               example: "456 Work Ave, City, Country"
- *         removeLocation:
- *           type: string
- *           description: Label or index of location to remove
- *           example: "Home"
- *         updateLocation:
- *           type: object
- *           description: Update location by index
- *           properties:
- *             index:
- *               type: integer
- *               example: 0
- *             label:
- *               type: string
- *               example: "Updated Home"
- *             preciseLocation:
- *               type: string
- *               example: "789 New St, City, Country"
  *
  *     ChangePassword:
  *       type: object
@@ -352,6 +361,11 @@
  *         phoneNumber:
  *           type: string
  *           nullable: true
+ *         profileImage:
+ *           type: string
+ *           nullable: true
+ *           description: Cloudinary URL for the user's profile image
+ *           example: "https://res.cloudinary.com/cloudname/image/upload/v1234567890/profile_images/user123.jpg"
  *         locations:
  *           type: array
  *           description: Customer saved locations (only for customers)
@@ -434,6 +448,10 @@
  *                 phoneNumber:
  *                   type: string
  *                   nullable: true
+ *                 profileImage:
+ *                   type: string
+ *                   nullable: true
+ *                   description: User's profile image URL
  *                 locations:
  *                   type: array
  *                   description: Customer saved locations (only for customers)
@@ -785,6 +803,7 @@
  *       Response includes isProfileComplete field based on user role:
  *       - Customers: true if they have at least one saved location
  *       - Riders/Owners: true when registrationStatus is "completed"
+ *       Response includes profileImage URL if user has uploaded one
  *
  *       **Important**: If email is not verified, a new OTP will be sent and login will fail.
  *     security: []
@@ -1068,7 +1087,7 @@
  *       - Customers: locations array
  *       - Riders: currentLocation
  *       - Owners: neither location field
- *       Always includes isProfileComplete field
+ *       Always includes isProfileComplete and profileImage fields
  *     security:
  *       - bearerAuth: []
  *     responses:
@@ -1095,11 +1114,21 @@
  * @swagger
  * /api/auth/profile:
  *   put:
- *     summary: Update user profile
+ *     summary: Update user profile (including profile image)
  *     tags: [Auth]
  *     description: |
  *       Protected endpoint - Requires valid JWT token
- *       Supports location management operations:
+ *       Supports profile image upload, location management, and profile updates.
+ *
+ *       **Profile Images**:
+ *       - Accepts base64 encoded image strings (data:image/[type];base64,...)
+ *       - Supported formats: jpeg, jpg, png, gif, webp
+ *       - Max size: 5MB
+ *       - Set to null to remove profile image
+ *       - Images are uploaded to Cloudinary and optimized (400x400, face detection)
+ *       - Old images are automatically deleted when uploading new ones
+ *
+ *       **Location Management**:
  *       - Replace all locations with new array
  *       - Add a new location (validates unique label)
  *       - Remove location by index or label
@@ -1147,6 +1176,10 @@
  *                     phoneNumber:
  *                       type: string
  *                       nullable: true
+ *                     profileImage:
+ *                       type: string
+ *                       nullable: true
+ *                       description: Updated profile image URL
  *                     locations:
  *                       type: array
  *                       items:
