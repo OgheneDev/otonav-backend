@@ -94,6 +94,9 @@ export const users = pgTable("users", {
   password: text("password").notNull(),
   name: text("name"),
 
+  profileImage: text("profile_image"),
+  profileImagePublicId: text("profile_image_public_id"), // Store Cloudinary public ID
+
   // Store locations as JSONB array for customers
   locations: jsonb("locations")
     .$type<
@@ -144,11 +147,6 @@ export const users = pgTable("users", {
 
   // Phone number
   phoneNumber: text("phone_number"),
-
-  // CRITICAL FIX: Registration completion flag should default to false
-  registrationCompleted: boolean("registration_completed")
-    .default(false)
-    .notNull(),
 
   // Metadata
   lastLoginAt: timestamp("last_login_at"),

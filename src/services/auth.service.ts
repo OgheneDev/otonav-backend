@@ -11,6 +11,9 @@ import {
 import { eq, and, sql } from "drizzle-orm";
 import { sendEmail } from "./email.service.js";
 import { generateOTP, getOTPExpiration, verifyOTP } from "./otp.service.js";
+import { CloudinaryService } from "./cloudinary.service.js";
+import { writeFile, unlink, mkdir } from "fs/promises";
+import { join } from "path";
 
 const JWT_SECRET: string = process.env.JWT_SECRET!;
 const ACCESS_EXPIRES_IN = "7d";
@@ -79,16 +82,15 @@ export const verifyToken = <T = TokenPayload>(token: string): T => {
 // --- Token Generation for Registration/Invitation ---
 const generateRegistrationToken = (
   email: string,
-  orgId: string = "", // Make orgId optional with a default value
+  orgId: string = "",
   role: string,
-  name?: string, // Add name parameter
+  name?: string,
 ): string => {
   if (role === "customer") {
-    // Customers don't belong to specific orgs, so don't include orgId
     return jwt.sign(
       {
         email,
-        name, // Include name in the token
+        name,
         role,
         type: "registration",
       },
@@ -97,7 +99,6 @@ const generateRegistrationToken = (
     );
   }
 
-  // Riders need orgId
   if (!orgId) {
     throw new Error("orgId is required for rider registration tokens");
   }
@@ -105,7 +106,7 @@ const generateRegistrationToken = (
   return jwt.sign(
     {
       email,
-      name, // Include name for riders too
+      name,
       orgId,
       role,
       type: "registration",
@@ -145,10 +146,6 @@ const getInvitationLink = (token: string): string => {
 };
 
 // --- OTP Management ---
-
-/**
- * Store OTP - WITH IMMEDIATE VERIFICATION
- */
 const storeOTP = async (
   userId: string,
   otp: string,
@@ -158,11 +155,6 @@ const storeOTP = async (
   const otpExpires = getOTPExpiration();
   const client = dbClient || db;
 
-  console.log(`📝 Storing OTP for user ${userId}, type: ${otpType}`);
-  console.log(`   OTP value: ${otp}`);
-  console.log(`   OTP expires: ${otpExpires}`);
-
-  // Update with explicit RETURNING to ensure we get what was written
   const result = await client
     .update(users)
     .set({
@@ -180,48 +172,55 @@ const storeOTP = async (
     });
 
   if (!result || result.length === 0) {
-    console.log(`❌ No user found with ID: ${userId}`);
     throw new Error(`No user found with ID: ${userId}`);
   }
 
-  console.log(`✅ OTP stored, returned data:`, {
-    otpCode: result[0].otpCode,
-    otpExpires: result[0].otpExpires,
-    otpType: result[0].otpType,
-  });
-
-  // CRITICAL: Verify the OTP was actually stored correctly
   if (result[0].otpCode !== otp) {
-    console.error("❌ OTP MISMATCH after storage!", {
-      expected: otp,
-      actual: result[0].otpCode,
-    });
     throw new Error("Failed to store OTP correctly");
   }
 
-  // ADDITIONAL VERIFICATION: Read back from database to confirm
-  const verification = await client.query.users.findFirst({
-    where: eq(users.id, userId),
-    columns: {
-      otpCode: true,
-      otpExpires: true,
-      otpType: true,
-    },
-  });
-
-  console.log(`🔍 Verification read-back:`, verification);
-
-  if (verification?.otpCode !== otp) {
-    console.error("❌ OTP VERIFICATION FAILED on read-back!", {
-      expected: otp,
-      readBack: verification?.otpCode,
-    });
-    throw new Error("OTP storage verification failed");
-  }
-
-  console.log(`✅ OTP storage verified successfully`);
   return result[0];
 };
+
+// --- Image Upload Helper ---
+async function saveUploadedImage(base64Image: string): Promise<string> {
+  const matches = base64Image.match(/^data:image\/([a-zA-Z]+);base64,(.+)$/);
+  if (!matches) {
+    throw new Error(
+      "Invalid base64 image format. Expected data:image/[type];base64,...",
+    );
+  }
+
+  const mimeType = matches[1].toLowerCase();
+  const base64Data = matches[2];
+
+  const allowedMimeTypes = ["jpeg", "jpg", "png", "gif", "webp"];
+  if (!allowedMimeTypes.includes(mimeType)) {
+    throw new Error(
+      `Invalid image type. Allowed: ${allowedMimeTypes.join(", ")}`,
+    );
+  }
+
+  const buffer = Buffer.from(base64Data, "base64");
+
+  if (buffer.length > 5 * 1024 * 1024) {
+    throw new Error("Image size must be less than 5MB");
+  }
+
+  const tempDir = join(process.cwd(), "temp");
+  try {
+    await mkdir(tempDir, { recursive: true });
+  } catch (error) {
+    // Directory might already exist
+  }
+
+  const filename = `profile_${Date.now()}_${Math.random().toString(36).substring(7)}.${mimeType === "jpg" ? "jpg" : mimeType}`;
+  const filePath = join(tempDir, filename);
+
+  await writeFile(filePath, buffer);
+
+  return filePath;
+}
 
 // --- Email Templates ---
 const sendVerificationOTPEmail = async (
@@ -523,25 +522,44 @@ const sendPasswordResetOTPEmail = async (
 };
 
 // --- Core Auth Logic ---
-
-/**
- * Check if customer profile is complete
- * For customers: profile is complete if they have at least one location saved
- * For other roles: profile is complete when registrationStatus is "completed"
- */
 const isCustomerProfileComplete = (user: any): boolean => {
   if (user.role === "customer") {
-    // Customer profile is complete if they have at least one location
     return Array.isArray(user.locations) && user.locations.length > 0;
   }
-
-  // For non-customers, profile is complete when registration is completed
   return user.registrationStatus === "completed";
 };
 
-/**
- * Register a Business (Owner)
- */
+// --- Helper: Explicit column selection to avoid registration_completed errors ---
+const selectUserColumns = {
+  id: users.id,
+  email: users.email,
+  password: users.password,
+  name: users.name,
+  locations: users.locations,
+  isProfileComplete: users.isProfileComplete,
+  currentLocation: users.currentLocation,
+  role: users.role,
+  registrationStatus: users.registrationStatus,
+  emailVerified: users.emailVerified,
+  verificationToken: users.verificationToken,
+  tokenVersion: users.tokenVersion,
+  resetPasswordToken: users.resetPasswordToken,
+  resetPasswordExpires: users.resetPasswordExpires,
+  lastPasswordChange: users.lastPasswordChange,
+  otpCode: users.otpCode,
+  otpExpires: users.otpExpires,
+  otpType: users.otpType,
+  registrationToken: users.registrationToken,
+  registrationTokenExpires: users.registrationTokenExpires,
+  invitationToken: users.invitationToken,
+  invitationTokenExpires: users.invitationTokenExpires,
+  phoneNumber: users.phoneNumber,
+  profileImage: users.profileImage,
+  profileImagePublicId: users.profileImagePublicId,
+  lastLoginAt: users.lastLoginAt,
+  createdAt: users.createdAt,
+};
+
 export const registerBusiness = async (
   email: string,
   password: string,
@@ -549,9 +567,13 @@ export const registerBusiness = async (
   businessName: string,
   phoneNumber: string,
 ) => {
-  const existing = await db.query.users.findFirst({
-    where: eq(users.email, email),
-  });
+  const existing = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1)
+    .then((rows) => rows[0]);
+
   if (existing) throw new Error("Email already in use");
 
   const passwordHash = await hashPassword(password);
@@ -579,7 +601,6 @@ export const registerBusiness = async (
         })
         .returning();
 
-      // Add user to user_organizations as owner
       await tx.insert(userOrganizations).values({
         userId: user.id,
         orgId: org.id,
@@ -620,18 +641,19 @@ export const registerBusiness = async (
     });
 };
 
-/**
- * Register a Customer (Public registration)
- */
 export const registerCustomer = async (
   email: string,
   password: string,
   name: string,
   phoneNumber: string,
 ) => {
-  const existing = await db.query.users.findFirst({
-    where: eq(users.email, email),
-  });
+  const existing = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1)
+    .then((rows) => rows[0]);
+
   if (existing) throw new Error("Email already in use");
 
   const passwordHash = await hashPassword(password);
@@ -646,7 +668,7 @@ export const registerCustomer = async (
       role: "customer",
       emailVerified: false,
       registrationStatus: "pending",
-      isProfileComplete: false, // NEW: Default to false
+      isProfileComplete: false,
       tokenVersion: 1,
     })
     .returning();
@@ -661,48 +683,26 @@ export const registerCustomer = async (
   };
 };
 
-/**
- * Verify Email with OTP - WITH FRESH DATABASE READ
- */
 export const verifyEmailWithOTP = async (
   email: string,
   otp: string,
 ): Promise<boolean> => {
-  console.log("=== VERIFY EMAIL OTP ===");
-  console.log("Timestamp:", new Date().toISOString());
-  console.log("Email:", email);
-  console.log("Input OTP:", otp);
-
-  // Normalize email
   const normalizedEmail = email.trim().toLowerCase();
-
-  // Normalize OTP input
   const normalizedOTP = otp.trim();
-  console.log("Normalized OTP:", normalizedOTP);
 
-  // CRITICAL: Force a fresh read from the database
-  // Use a transaction to ensure we get the most recent data
   return await db.transaction(async (tx) => {
-    const user = await tx.query.users.findFirst({
-      where: sql`LOWER(TRIM(${users.email})) = ${normalizedEmail}`,
-    });
+    const user = await tx
+      .select(selectUserColumns)
+      .from(users)
+      .where(sql`LOWER(TRIM(${users.email})) = ${normalizedEmail}`)
+      .limit(1)
+      .then((rows) => rows[0]);
 
     if (!user) {
-      console.log("❌ User not found");
       throw new Error("User not found");
     }
 
-    console.log("✅ User found:", user.id);
-    console.log("Database state:");
-    console.log("  - emailVerified:", user.emailVerified);
-    console.log("  - otpCode:", user.otpCode);
-    console.log("  - otpType:", user.otpType);
-    console.log("  - otpExpires:", user.otpExpires);
-    console.log("  - Current time:", new Date());
-
-    // If already verified, clear OTP and return
     if (user.emailVerified) {
-      console.log("✅ Email already verified");
       await tx
         .update(users)
         .set({
@@ -714,50 +714,30 @@ export const verifyEmailWithOTP = async (
       return true;
     }
 
-    // Validate OTP fields exist
     if (!user.otpCode || !user.otpExpires || !user.otpType) {
-      console.log("❌ Missing OTP fields");
       throw new Error("No OTP found. Please request a new verification code.");
     }
 
-    // Check OTP type
     if (user.otpType !== "verify") {
-      console.log("❌ Wrong OTP type:", user.otpType);
       throw new Error(
         "Invalid OTP type. This OTP is not for email verification.",
       );
     }
 
-    // Check expiration first
     const now = new Date();
     const expiresAt = new Date(user.otpExpires);
     const isExpired = now > expiresAt;
 
-    console.log("Time check:");
-    console.log("  - Now:", now.toISOString());
-    console.log("  - Expires:", expiresAt.toISOString());
-    console.log("  - Is expired:", isExpired);
-
     if (isExpired) {
-      console.log("❌ OTP expired");
       throw new Error("OTP has expired. Please request a new one.");
     }
 
-    // Check OTP match
     const otpMatch = normalizedOTP === user.otpCode.trim();
-    console.log("OTP comparison:");
-    console.log("  - Input:", normalizedOTP);
-    console.log("  - Stored:", user.otpCode.trim());
-    console.log("  - Match:", otpMatch);
 
     if (!otpMatch) {
-      console.log("❌ OTP does not match");
       throw new Error("Invalid OTP code.");
     }
 
-    console.log("✅ OTP verified, updating user...");
-
-    // Update user to verified
     await tx
       .update(users)
       .set({
@@ -769,28 +749,24 @@ export const verifyEmailWithOTP = async (
       })
       .where(eq(users.id, user.id));
 
-    console.log("✅ Email verified successfully");
-    console.log("=== END VERIFY ===");
     return true;
   });
 };
 
-/**
- * Authenticate User (Login)
- */
 export const authenticateUser = async (email: string, password: string) => {
-  // FIXED: Normalize email for consistency
   const normalizedEmail = email.trim().toLowerCase();
 
-  const user = await db.query.users.findFirst({
-    where: sql`LOWER(TRIM(${users.email})) = ${normalizedEmail}`,
-  });
+  const user = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(sql`LOWER(TRIM(${users.email})) = ${normalizedEmail}`)
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!user || !(await comparePassword(password, user.password))) {
     throw new Error("Invalid credentials");
   }
 
-  // FIXED: Check emailVerified status after fetching user
   if (!user.emailVerified) {
     const otp = generateOTP();
     await storeOTP(user.id, otp, "verify");
@@ -798,7 +774,6 @@ export const authenticateUser = async (email: string, password: string) => {
     throw new Error(`Please verify your email. A new OTP has been sent.`);
   }
 
-  // Get user's organizations
   const userOrgs = await db
     .select({
       orgId: userOrganizations.orgId,
@@ -812,7 +787,6 @@ export const authenticateUser = async (email: string, password: string) => {
       ),
     );
 
-  // If user has only one organization, use it as default
   const defaultOrgId = userOrgs.length === 1 ? userOrgs[0].orgId : null;
   const defaultRole = userOrgs.length === 1 ? userOrgs[0].role : user.role;
 
@@ -834,36 +808,33 @@ export const authenticateUser = async (email: string, password: string) => {
     tokenVersion: user.tokenVersion || 1,
   });
 
-  // Calculate profile completion status
   const profileComplete = isCustomerProfileComplete(user);
 
   return {
     user: {
       ...user,
       organizations: userOrgs,
-      isProfileComplete: profileComplete, // NEW: Add this field
+      isProfileComplete: profileComplete,
     },
     accessToken,
     refreshToken,
   };
 };
 
-/**
- * Get User by ID - UPDATED to return locations for customers and currentLocation for riders
- */
 export const getUserById = async (userId: string) => {
-  const user = await db.query.users.findFirst({
-    where: eq(users.id, userId),
-  });
+  const user = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!user) {
     throw new Error("User not found");
   }
 
-  // Calculate profile completion status
   const profileComplete = isCustomerProfileComplete(user);
 
-  // Return different location data based on role
   const response: any = {
     id: user.id,
     email: user.email,
@@ -873,54 +844,70 @@ export const getUserById = async (userId: string) => {
     createdAt: user.createdAt,
     lastLoginAt: user.lastLoginAt,
     phoneNumber: user.phoneNumber,
-    isProfileComplete: profileComplete, // NEW: Add this field
+    isProfileComplete: profileComplete,
     registrationStatus: user.registrationStatus,
+    profileImage: user.profileImage,
   };
 
-  // Add location data based on role
   if (user.role === "customer") {
-    // Return locations array for customers
     response.locations = user.locations || [];
   } else if (user.role === "rider") {
-    // Return currentLocation for riders
     response.currentLocation = user.currentLocation;
   }
 
   return response;
 };
 
-/**
- * Create Rider Account (Owner Action) - UPDATED with pending status
- */
 export const createRiderAccount = async (
   ownerId: string,
   orgId: string,
   riderEmail: string,
   riderName: string,
 ) => {
-  const owner = await db.query.users.findFirst({
-    where: eq(users.id, ownerId),
-  });
+  const owner = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.id, ownerId))
+    .limit(1)
+    .then((rows) => rows[0]);
 
-  const ownerMembership = await db.query.userOrganizations.findFirst({
-    where: and(
-      eq(userOrganizations.userId, ownerId),
-      eq(userOrganizations.orgId, orgId),
-      eq(userOrganizations.role, "owner"),
-    ),
-  });
+  const ownerMembership = await db
+    .select({
+      userId: userOrganizations.userId,
+      orgId: userOrganizations.orgId,
+      role: userOrganizations.role,
+    })
+    .from(userOrganizations)
+    .where(
+      and(
+        eq(userOrganizations.userId, ownerId),
+        eq(userOrganizations.orgId, orgId),
+        eq(userOrganizations.role, "owner"),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!owner || !ownerMembership) {
     throw new Error("Unauthorized: Only owners can create rider accounts");
   }
 
-  const existingUser = await db.query.users.findFirst({
-    where: eq(users.email, riderEmail),
-  });
+  const existingUser = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.email, riderEmail))
+    .limit(1)
+    .then((rows) => rows[0]);
 
-  const org = await db.query.organizations.findFirst({
-    where: eq(organizations.id, orgId),
-  });
+  const org = await db
+    .select({
+      id: organizations.id,
+      name: organizations.name,
+    })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!org) {
     throw new Error("Organization not found");
@@ -934,23 +921,29 @@ export const createRiderAccount = async (
     let invitationLink = "";
 
     if (existingUser) {
-      // Check if rider already belongs to this organization
-      const existingMembership = await tx.query.userOrganizations.findFirst({
-        where: and(
-          eq(userOrganizations.userId, existingUser.id),
-          eq(userOrganizations.orgId, orgId),
-        ),
-      });
+      const existingMembership = await tx
+        .select({
+          userId: userOrganizations.userId,
+          orgId: userOrganizations.orgId,
+          registrationStatus: userOrganizations.registrationStatus,
+        })
+        .from(userOrganizations)
+        .where(
+          and(
+            eq(userOrganizations.userId, existingUser.id),
+            eq(userOrganizations.orgId, orgId),
+          ),
+        )
+        .limit(1)
+        .then((rows) => rows[0]);
 
       if (existingMembership) {
-        // If they already have a pending invitation, resend it
         if (existingMembership.registrationStatus === "pending") {
           throw new Error("Rider already has a pending invitation");
         }
         throw new Error("Rider already belongs to this organization");
       }
 
-      // Send invitation to join new organization
       token = generateInvitationToken(riderEmail, orgId, "rider");
       invitationLink = getInvitationLink(token);
       emailType = "invitation";
@@ -962,7 +955,6 @@ export const createRiderAccount = async (
         riderName,
       );
 
-      // Create pending membership for existing user
       await tx.insert(userOrganizations).values({
         userId: existingUser.id,
         orgId: orgId,
@@ -985,12 +977,10 @@ export const createRiderAccount = async (
         })
         .where(eq(users.id, existingUser.id));
     } else {
-      // New user - send registration link
       token = generateRegistrationToken(riderEmail, orgId, "rider");
       registrationLink = getRegistrationLink(token, "rider");
       emailType = "registration";
 
-      // Generate a temporary password
       const tempPassword = `temp_${Math.random().toString(36).slice(2, 12)}`;
       const tempPasswordHash = await hashPassword(tempPassword);
 
@@ -1009,7 +999,6 @@ export const createRiderAccount = async (
         })
         .returning();
 
-      // Create pending membership for new user
       await tx.insert(userOrganizations).values({
         userId: rider.id,
         orgId: orgId,
@@ -1060,52 +1049,32 @@ export const createRiderAccount = async (
   });
 };
 
-/**
- * Complete Rider Registration via Token (Public) - UPDATED
- */
 export const completeRiderRegistrationViaToken = async (
   token: string,
   password: string,
   phoneNumber?: string,
 ) => {
-  console.log("=== Debug: Rider Registration ===");
-  console.log("Received token:", token);
-  console.log("Token length:", token.length);
-
-  if (!token || token.trim() === "") {
-    throw new Error("Token is required");
-  }
-
   let cleanToken = token;
   if (token.includes("&")) {
     cleanToken = token.split("&")[0];
-    console.log("Cleaned token from URL params:", cleanToken);
   }
 
   if (cleanToken.includes("token=")) {
     const match = cleanToken.match(/token=([^&]+)/);
     if (match) {
       cleanToken = match[1];
-      console.log("Extracted token from token= param:", cleanToken);
     }
   }
 
   let payload;
   try {
     const decoded = jwt.decode(cleanToken) as any;
-    console.log("Decoded token payload:", decoded);
-
     if (!decoded || !decoded.email) {
-      console.error("Invalid token structure. Decoded:", decoded);
       throw new Error("Invalid token structure");
     }
 
     payload = jwt.verify(cleanToken, JWT_SECRET) as any;
-    console.log("Verified JWT payload:", payload);
   } catch (error: any) {
-    console.error("JWT error:", error.message);
-    console.error("Error name:", error.name);
-    console.error("Clean token used:", cleanToken.substring(0, 50) + "...");
     throw new Error(`Invalid token: ${error.message}`);
   }
 
@@ -1121,9 +1090,12 @@ export const completeRiderRegistrationViaToken = async (
 
   const { email, orgId } = payload;
 
-  const user = await db.query.users.findFirst({
-    where: eq(users.email, email),
-  });
+  const user = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!user) {
     throw new Error(`No user found with email: ${email}`);
@@ -1148,7 +1120,6 @@ export const completeRiderRegistrationViaToken = async (
     .where(eq(users.id, user.id))
     .returning();
 
-  // Update user_organizations to mark as completed and active
   await db
     .update(userOrganizations)
     .set({
@@ -1189,9 +1160,6 @@ export const completeRiderRegistrationViaToken = async (
   };
 };
 
-/**
- * Accept Invitation (Public) - UPDATED
- */
 export const acceptInvitation = async (token: string) => {
   let payload;
   try {
@@ -1206,28 +1174,41 @@ export const acceptInvitation = async (token: string) => {
 
   const { email, orgId } = payload;
 
-  const user = await db.query.users.findFirst({
-    where: and(
-      eq(users.email, email),
-      eq(users.invitationToken, token),
-      sql`${users.invitationTokenExpires} > NOW()`,
-    ),
-  });
+  const user = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(
+      and(
+        eq(users.email, email),
+        eq(users.invitationToken, token),
+        sql`${users.invitationTokenExpires} > NOW()`,
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!user) {
     throw new Error("Invalid invitation token or token expired");
   }
 
-  const existingMembership = await db.query.userOrganizations.findFirst({
-    where: and(
-      eq(userOrganizations.userId, user.id),
-      eq(userOrganizations.orgId, orgId),
-    ),
-  });
+  const existingMembership = await db
+    .select({
+      userId: userOrganizations.userId,
+      orgId: userOrganizations.orgId,
+      registrationStatus: userOrganizations.registrationStatus,
+    })
+    .from(userOrganizations)
+    .where(
+      and(
+        eq(userOrganizations.userId, user.id),
+        eq(userOrganizations.orgId, orgId),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (existingMembership) {
     if (existingMembership.registrationStatus === "pending") {
-      // Update pending invitation to completed
       await db
         .update(userOrganizations)
         .set({
@@ -1245,7 +1226,6 @@ export const acceptInvitation = async (token: string) => {
       throw new Error("User already belongs to this organization");
     }
   } else {
-    // Create new membership
     await db.insert(userOrganizations).values({
       userId: user.id,
       orgId: orgId,
@@ -1266,9 +1246,12 @@ export const acceptInvitation = async (token: string) => {
     .where(eq(users.id, user.id))
     .returning();
 
-  const org = await db.query.organizations.findFirst({
-    where: eq(organizations.id, orgId),
-  });
+  const org = await db
+    .select({ name: organizations.name })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1)
+    .then((rows) => rows[0]);
 
   await db.insert(auditLogs).values({
     orgId: orgId,
@@ -1289,59 +1272,82 @@ export const acceptInvitation = async (token: string) => {
   };
 };
 
-/**
- * Resend Rider Invitation
- */
 export const resendRiderInvitation = async (
   ownerId: string,
   orgId: string,
   riderId: string,
 ) => {
-  const owner = await db.query.users.findFirst({
-    where: eq(users.id, ownerId),
-  });
+  const owner = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.id, ownerId))
+    .limit(1)
+    .then((rows) => rows[0]);
 
-  const ownerMembership = await db.query.userOrganizations.findFirst({
-    where: and(
-      eq(userOrganizations.userId, ownerId),
-      eq(userOrganizations.orgId, orgId),
-      eq(userOrganizations.role, "owner"),
-    ),
-  });
+  const ownerMembership = await db
+    .select({
+      userId: userOrganizations.userId,
+      orgId: userOrganizations.orgId,
+      role: userOrganizations.role,
+    })
+    .from(userOrganizations)
+    .where(
+      and(
+        eq(userOrganizations.userId, ownerId),
+        eq(userOrganizations.orgId, orgId),
+        eq(userOrganizations.role, "owner"),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!owner || !ownerMembership) {
     throw new Error("Unauthorized");
   }
 
-  const rider = await db.query.users.findFirst({
-    where: eq(users.id, riderId),
-  });
+  const rider = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.id, riderId))
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!rider) {
     throw new Error("Rider not found");
   }
 
-  const membership = await db.query.userOrganizations.findFirst({
-    where: and(
-      eq(userOrganizations.userId, riderId),
-      eq(userOrganizations.orgId, orgId),
-      eq(userOrganizations.registrationStatus, "pending"),
-    ),
-  });
+  const membership = await db
+    .select({
+      userId: userOrganizations.userId,
+      orgId: userOrganizations.orgId,
+      registrationStatus: userOrganizations.registrationStatus,
+    })
+    .from(userOrganizations)
+    .where(
+      and(
+        eq(userOrganizations.userId, riderId),
+        eq(userOrganizations.orgId, orgId),
+        eq(userOrganizations.registrationStatus, "pending"),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!membership) {
     throw new Error("No pending invitation found");
   }
 
-  const org = await db.query.organizations.findFirst({
-    where: eq(organizations.id, orgId),
-  });
+  const org = await db
+    .select({ name: organizations.name })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1)
+    .then((rows) => rows[0]);
 
   let token;
   let emailType;
 
   if (rider.emailVerified && rider.registrationStatus === "completed") {
-    // Existing user - resend invitation
     token = generateInvitationToken(rider.email, orgId, "rider");
     emailType = "invitation";
     await sendRiderInvitationEmail(
@@ -1359,7 +1365,6 @@ export const resendRiderInvitation = async (
       })
       .where(eq(users.id, riderId));
   } else {
-    // New user - resend registration link
     token = generateRegistrationToken(rider.email, orgId, "rider");
     emailType = "registration";
     await sendRiderRegistrationLinkEmail(
@@ -1378,7 +1383,6 @@ export const resendRiderInvitation = async (
       .where(eq(users.id, riderId));
   }
 
-  // Update invitation sent timestamp
   await db
     .update(userOrganizations)
     .set({
@@ -1398,43 +1402,60 @@ export const resendRiderInvitation = async (
   };
 };
 
-/**
- * Cancel Rider Invitation
- */
 export const cancelRiderInvitation = async (
   ownerId: string,
   orgId: string,
   riderId: string,
 ) => {
-  const owner = await db.query.users.findFirst({
-    where: eq(users.id, ownerId),
-  });
+  const owner = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.id, ownerId))
+    .limit(1)
+    .then((rows) => rows[0]);
 
-  const ownerMembership = await db.query.userOrganizations.findFirst({
-    where: and(
-      eq(userOrganizations.userId, ownerId),
-      eq(userOrganizations.orgId, orgId),
-      eq(userOrganizations.role, "owner"),
-    ),
-  });
+  const ownerMembership = await db
+    .select({
+      userId: userOrganizations.userId,
+      orgId: userOrganizations.orgId,
+      role: userOrganizations.role,
+    })
+    .from(userOrganizations)
+    .where(
+      and(
+        eq(userOrganizations.userId, ownerId),
+        eq(userOrganizations.orgId, orgId),
+        eq(userOrganizations.role, "owner"),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!owner || !ownerMembership) {
     throw new Error("Unauthorized");
   }
 
-  const membership = await db.query.userOrganizations.findFirst({
-    where: and(
-      eq(userOrganizations.userId, riderId),
-      eq(userOrganizations.orgId, orgId),
-      eq(userOrganizations.registrationStatus, "pending"),
-    ),
-  });
+  const membership = await db
+    .select({
+      userId: userOrganizations.userId,
+      orgId: userOrganizations.orgId,
+      registrationStatus: userOrganizations.registrationStatus,
+    })
+    .from(userOrganizations)
+    .where(
+      and(
+        eq(userOrganizations.userId, riderId),
+        eq(userOrganizations.orgId, orgId),
+        eq(userOrganizations.registrationStatus, "pending"),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!membership) {
     throw new Error("No pending invitation found");
   }
 
-  // Remove from user_organizations
   await db
     .delete(userOrganizations)
     .where(
@@ -1444,22 +1465,27 @@ export const cancelRiderInvitation = async (
       ),
     );
 
-  const rider = await db.query.users.findFirst({
-    where: and(
-      eq(users.id, riderId),
-      eq(users.registrationStatus, "pending"),
-      eq(users.emailVerified, false),
-    ),
-  });
+  const rider = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(
+      and(
+        eq(users.id, riderId),
+        eq(users.registrationStatus, "pending"),
+        eq(users.emailVerified, false),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (rider) {
-    // Check if user has any other organization memberships
-    const otherMemberships = await db.query.userOrganizations.findMany({
-      where: eq(userOrganizations.userId, riderId),
-    });
+    const otherMemberships = await db
+      .select({ id: userOrganizations.id })
+      .from(userOrganizations)
+      .where(eq(userOrganizations.userId, riderId))
+      .then((rows) => rows);
 
     if (otherMemberships.length === 0) {
-      // Delete user if no other memberships
       await db.delete(users).where(eq(users.id, riderId));
     }
   }
@@ -1470,41 +1496,54 @@ export const cancelRiderInvitation = async (
   };
 };
 
-/**
- * Create Customer Account (Business Owner Action)
- */
 export const createCustomerAccount = async (
   ownerId: string,
   orgId: string,
   customerEmail: string,
   customerName?: string,
 ) => {
-  // FIX: Check owner membership instead of orgId in users table
-  const ownerMembership = await db.query.userOrganizations.findFirst({
-    where: and(
-      eq(userOrganizations.userId, ownerId),
-      eq(userOrganizations.orgId, orgId),
-      eq(userOrganizations.role, "owner"),
-    ),
-  });
+  const ownerMembership = await db
+    .select({
+      userId: userOrganizations.userId,
+      orgId: userOrganizations.orgId,
+      role: userOrganizations.role,
+    })
+    .from(userOrganizations)
+    .where(
+      and(
+        eq(userOrganizations.userId, ownerId),
+        eq(userOrganizations.orgId, orgId),
+        eq(userOrganizations.role, "owner"),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!ownerMembership) {
     throw new Error("Unauthorized: Only owners can create customer accounts");
   }
 
-  const existingUser = await db.query.users.findFirst({
-    where: eq(users.email, customerEmail),
-  });
+  const existingUser = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.email, customerEmail))
+    .limit(1)
+    .then((rows) => rows[0]);
 
-  const org = await db.query.organizations.findFirst({
-    where: eq(organizations.id, orgId),
-  });
+  const org = await db
+    .select({
+      id: organizations.id,
+      name: organizations.name,
+    })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!org) {
     throw new Error("Organization not found");
   }
 
-  // Check if user already exists and is verified
   if (
     existingUser &&
     existingUser.emailVerified &&
@@ -1518,14 +1557,13 @@ export const createCustomerAccount = async (
     let customer;
     const token = generateRegistrationToken(
       customerEmail,
-      "", // No orgId for customers
+      "",
       "customer",
       customerName,
     );
     const registrationLink = getRegistrationLink(token, "customer");
 
     if (existingUser && !existingUser.emailVerified) {
-      // Update existing unverified user
       [customer] = await tx
         .update(users)
         .set({
@@ -1534,12 +1572,11 @@ export const createCustomerAccount = async (
           registrationToken: token,
           registrationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
           registrationStatus: "pending",
-          isProfileComplete: false, // NEW: Reset to false
+          isProfileComplete: false,
         })
         .where(eq(users.id, existingUser.id))
         .returning();
     } else {
-      // Create new customer with pending status
       const tempPassword = `temp_${Math.random().toString(36).slice(2, 12)}`;
       const tempPasswordHash = await hashPassword(tempPassword);
 
@@ -1554,7 +1591,7 @@ export const createCustomerAccount = async (
           registrationToken: token,
           registrationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
           registrationStatus: "pending",
-          isProfileComplete: false, // NEW: Reset to false
+          isProfileComplete: false,
           tokenVersion: 1,
         })
         .returning();
@@ -1592,57 +1629,72 @@ export const createCustomerAccount = async (
   });
 };
 
-/**
- * Resend Customer Registration Link
- */
 export const resendCustomerRegistrationLink = async (
   ownerId: string,
   orgId: string,
   customerId: string,
 ) => {
-  const owner = await db.query.users.findFirst({
-    where: eq(users.id, ownerId),
-  });
+  const owner = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.id, ownerId))
+    .limit(1)
+    .then((rows) => rows[0]);
 
-  const ownerMembership = await db.query.userOrganizations.findFirst({
-    where: and(
-      eq(userOrganizations.userId, ownerId),
-      eq(userOrganizations.orgId, orgId),
-      eq(userOrganizations.role, "owner"),
-    ),
-  });
+  const ownerMembership = await db
+    .select({
+      userId: userOrganizations.userId,
+      orgId: userOrganizations.orgId,
+      role: userOrganizations.role,
+    })
+    .from(userOrganizations)
+    .where(
+      and(
+        eq(userOrganizations.userId, ownerId),
+        eq(userOrganizations.orgId, orgId),
+        eq(userOrganizations.role, "owner"),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!owner || !ownerMembership) {
     throw new Error("Unauthorized");
   }
 
-  const customer = await db.query.users.findFirst({
-    where: and(
-      eq(users.id, customerId),
-      eq(users.role, "customer"),
-      eq(users.emailVerified, false),
-    ),
-  });
+  const customer = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(
+      and(
+        eq(users.id, customerId),
+        eq(users.role, "customer"),
+        eq(users.emailVerified, false),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!customer) {
     throw new Error("Customer not found or already verified");
   }
 
-  const org = await db.query.organizations.findFirst({
-    where: eq(organizations.id, orgId),
-  });
+  const org = await db
+    .select({ name: organizations.name })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1)
+    .then((rows) => rows[0]);
 
-  // Generate new registration token
   const token = generateRegistrationToken(
     customer.email,
-    "", // No orgId for customers
+    "",
     "customer",
     customer.name || undefined,
   );
 
   const registrationLink = getRegistrationLink(token, "customer");
 
-  // Update customer with new token
   await db
     .update(users)
     .set({
@@ -1651,7 +1703,6 @@ export const resendCustomerRegistrationLink = async (
     })
     .where(eq(users.id, customerId));
 
-  // Send email
   await sendCustomerRegistrationLinkEmail(
     customer.email,
     registrationLink,
@@ -1664,18 +1715,18 @@ export const resendCustomerRegistrationLink = async (
   };
 };
 
-/**
- * Complete Customer Registration via Token (Public)
- */
 export const completeCustomerRegistrationViaToken = async (
   token: string,
   password: string,
   phoneNumber?: string,
   name?: string,
 ) => {
-  const user = await db.query.users.findFirst({
-    where: eq(users.registrationToken, token),
-  });
+  const user = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.registrationToken, token))
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!user) {
     throw new Error("Invalid registration token");
@@ -1714,13 +1765,12 @@ export const completeCustomerRegistrationViaToken = async (
     registrationStatus: "completed",
     registrationToken: null,
     registrationTokenExpires: null,
-    isProfileComplete: false, // NEW: Default to false until they add locations
+    isProfileComplete: false,
     otpCode: otp,
     otpExpires: otpExpires,
     otpType: "verify",
   };
 
-  // Use the name from the token if not provided in the form
   if (name) {
     updateData.name = name;
   } else if (payload.name) {
@@ -1735,7 +1785,6 @@ export const completeCustomerRegistrationViaToken = async (
 
   await sendVerificationOTPEmail(user.email, otp, updatedUser.name || "");
 
-  // Generate access token for immediate login
   const accessToken = generateAccessToken({
     userId: updatedUser.id,
     email: updatedUser.email,
@@ -1755,22 +1804,21 @@ export const completeCustomerRegistrationViaToken = async (
   };
 };
 
-/**
- * Refresh Access Token
- */
 export const refreshAccessToken = async (refreshToken: string) => {
   const payload = verifyToken<RefreshTokenPayload>(refreshToken);
   if (payload.type !== "refresh") throw new Error("Invalid token type");
 
-  const user = await db.query.users.findFirst({
-    where: eq(users.id, payload.userId),
-  });
+  const user = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.id, payload.userId))
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!user || user.tokenVersion !== payload.tokenVersion) {
     throw new Error("Token revoked or user not found");
   }
 
-  // Get user's organizations to include in new token
   const userOrgs = await db
     .select({
       orgId: userOrganizations.orgId,
@@ -1798,9 +1846,6 @@ export const refreshAccessToken = async (refreshToken: string) => {
   return { accessToken };
 };
 
-/**
- * Logout
- */
 export const logoutUser = async (userId: string) => {
   await db
     .update(users)
@@ -1808,23 +1853,16 @@ export const logoutUser = async (userId: string) => {
     .where(eq(users.id, userId));
 };
 
-/**
- * Update User Profile with location management
- */
 export const updateUserProfile = async (
   userId: string,
   updates: {
     name?: string | null;
     email?: string;
     phoneNumber?: string;
-    // For location operations, you can pass:
-    // - locations: Array to replace all locations
-    // - addLocation: { label, preciseLocation } to add a new one
-    // - removeLocation: index or label to remove
-    // - updateLocation: { index, label, preciseLocation } to update
+    profileImage?: string;
     locations?: Array<{ label: string; preciseLocation: string }>;
     addLocation?: { label: string; preciseLocation: string };
-    removeLocation?: number | string; // index or label
+    removeLocation?: number | string;
     updateLocation?: {
       index: number;
       label?: string;
@@ -1832,180 +1870,222 @@ export const updateUserProfile = async (
     };
   },
 ) => {
-  const user = await db.query.users.findFirst({
-    where: eq(users.id, userId),
-  });
+  const user = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!user) {
     throw new Error("User not found");
   }
 
   const updateData: any = {};
+  let oldProfileImagePublicId: string | null = null;
+  let tempFilePath: string | null = null;
 
-  if (updates.name !== undefined) {
-    updateData.name = updates.name;
-  }
+  try {
+    if (updates.profileImage !== undefined) {
+      if (updates.profileImage === null || updates.profileImage === "") {
+        if (user.profileImagePublicId) {
+          await CloudinaryService.deleteImage(user.profileImagePublicId);
+          updateData.profileImage = null;
+          updateData.profileImagePublicId = null;
+        }
+      } else if (updates.profileImage.startsWith("data:image/")) {
+        if (user.profileImagePublicId) {
+          oldProfileImagePublicId = user.profileImagePublicId;
+        }
 
-  if (updates.phoneNumber !== undefined) {
-    if (updates.phoneNumber && updates.phoneNumber.trim() !== "") {
-      const phoneRegex = /^[+]?[0-9\s\-\(\)]{10,}$/;
-      if (!phoneRegex.test(updates.phoneNumber)) {
-        throw new Error("Invalid phone number format");
-      }
-    }
-    updateData.phoneNumber = updates.phoneNumber || null;
-  }
-
-  // Handle location operations
-  const currentLocations: Array<{ label: string; preciseLocation: string }> =
-    user.locations || [];
-
-  let newLocations = currentLocations;
-  let locationsChanged = false;
-
-  // Option 1: Replace all locations
-  if (updates.locations !== undefined) {
-    newLocations = updates.locations;
-    locationsChanged = true;
-  }
-  // Option 2: Add a new location
-  else if (updates.addLocation) {
-    const newLocation = {
-      label: updates.addLocation.label,
-      preciseLocation: updates.addLocation.preciseLocation,
-    };
-
-    // Check for duplicate labels
-    const labelExists = currentLocations.some(
-      (loc) => loc.label === newLocation.label,
-    );
-
-    if (labelExists) {
-      throw new Error(
-        `Location with label "${newLocation.label}" already exists`,
-      );
-    }
-
-    newLocations = [...currentLocations, newLocation];
-    locationsChanged = true;
-  }
-  // Option 3: Remove a location
-  else if (updates.removeLocation !== undefined) {
-    let indexToRemove: number;
-
-    if (typeof updates.removeLocation === "string") {
-      // Find by label
-      indexToRemove = currentLocations.findIndex(
-        (loc) => loc.label === updates.removeLocation,
-      );
-      if (indexToRemove === -1) {
-        throw new Error(
-          `Location with label "${updates.removeLocation}" not found`,
+        tempFilePath = await saveUploadedImage(updates.profileImage);
+        const uploadResult = await CloudinaryService.updateImage(
+          oldProfileImagePublicId,
+          tempFilePath,
+          {
+            folder: "user_profiles",
+            transformation: [
+              { width: 400, height: 400, crop: "fill", gravity: "face" },
+              { quality: "auto" },
+              { fetch_format: "auto" },
+            ],
+          },
         );
-      }
-    } else {
-      // By index
-      indexToRemove = updates.removeLocation as number;
-      if (indexToRemove < 0 || indexToRemove >= currentLocations.length) {
-        throw new Error(`Location index ${indexToRemove} out of bounds`);
+
+        updateData.profileImage = uploadResult.secureUrl;
+        updateData.profileImagePublicId = uploadResult.publicId;
+      } else if (updates.profileImage.startsWith("http")) {
+        updateData.profileImage = updates.profileImage;
+        updateData.profileImagePublicId = null;
       }
     }
 
-    newLocations = [...currentLocations];
-    newLocations.splice(indexToRemove, 1);
-    locationsChanged = true;
-  }
-  // Option 4: Update a location
-  else if (updates.updateLocation) {
-    const { index, label, preciseLocation } = updates.updateLocation;
-
-    if (index < 0 || index >= currentLocations.length) {
-      throw new Error(`Location index ${index} out of bounds`);
+    if (updates.name !== undefined) {
+      updateData.name = updates.name;
     }
 
-    newLocations = [...currentLocations];
+    if (updates.phoneNumber !== undefined) {
+      if (updates.phoneNumber && updates.phoneNumber.trim() !== "") {
+        const phoneRegex = /^[+]?[0-9\s\-\(\)]{10,}$/;
+        if (!phoneRegex.test(updates.phoneNumber)) {
+          throw new Error("Invalid phone number format");
+        }
+      }
+      updateData.phoneNumber = updates.phoneNumber || null;
+    }
 
-    // Check if new label conflicts with other locations
-    if (label && label !== newLocations[index].label) {
-      const labelExists = newLocations.some(
-        (loc, i) => i !== index && loc.label === label,
+    const currentLocations: Array<{ label: string; preciseLocation: string }> =
+      user.locations || [];
+
+    let newLocations = currentLocations;
+    let locationsChanged = false;
+
+    if (updates.locations !== undefined) {
+      newLocations = updates.locations;
+      locationsChanged = true;
+    } else if (updates.addLocation) {
+      const newLocation = {
+        label: updates.addLocation.label,
+        preciseLocation: updates.addLocation.preciseLocation,
+      };
+
+      const labelExists = currentLocations.some(
+        (loc) => loc.label === newLocation.label,
       );
 
       if (labelExists) {
-        throw new Error(`Location with label "${label}" already exists`);
+        throw new Error(
+          `Location with label "${newLocation.label}" already exists`,
+        );
+      }
+
+      newLocations = [...currentLocations, newLocation];
+      locationsChanged = true;
+    } else if (updates.removeLocation !== undefined) {
+      let indexToRemove: number;
+
+      if (typeof updates.removeLocation === "string") {
+        indexToRemove = currentLocations.findIndex(
+          (loc) => loc.label === updates.removeLocation,
+        );
+        if (indexToRemove === -1) {
+          throw new Error(
+            `Location with label "${updates.removeLocation}" not found`,
+          );
+        }
+      } else {
+        indexToRemove = updates.removeLocation as number;
+        if (indexToRemove < 0 || indexToRemove >= currentLocations.length) {
+          throw new Error(`Location index ${indexToRemove} out of bounds`);
+        }
+      }
+
+      newLocations = [...currentLocations];
+      newLocations.splice(indexToRemove, 1);
+      locationsChanged = true;
+    } else if (updates.updateLocation) {
+      const { index, label, preciseLocation } = updates.updateLocation;
+
+      if (index < 0 || index >= currentLocations.length) {
+        throw new Error(`Location index ${index} out of bounds`);
+      }
+
+      newLocations = [...currentLocations];
+
+      if (label && label !== newLocations[index].label) {
+        const labelExists = newLocations.some(
+          (loc, i) => i !== index && loc.label === label,
+        );
+
+        if (labelExists) {
+          throw new Error(`Location with label "${label}" already exists`);
+        }
+      }
+
+      if (label !== undefined) {
+        newLocations[index].label = label;
+      }
+
+      if (preciseLocation !== undefined) {
+        newLocations[index].preciseLocation = preciseLocation;
+      }
+
+      locationsChanged = true;
+    }
+
+    if (locationsChanged) {
+      updateData.locations = newLocations;
+
+      if (user.role === "customer") {
+        updateData.isProfileComplete = newLocations.length > 0;
       }
     }
 
-    if (label !== undefined) {
-      newLocations[index].label = label;
+    if (updates.email) {
+      const existingUser = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(
+          and(eq(users.email, updates.email), sql`${users.id} != ${userId}`),
+        )
+        .limit(1)
+        .then((rows) => rows[0]);
+
+      if (existingUser) {
+        throw new Error("Email already in use");
+      }
+
+      updateData.email = updates.email;
+      updateData.emailVerified = false;
+
+      const otp = generateOTP();
+      updateData.otpCode = otp;
+      updateData.otpExpires = getOTPExpiration();
+      updateData.otpType = "verify";
     }
 
-    if (preciseLocation !== undefined) {
-      newLocations[index].preciseLocation = preciseLocation;
+    if (Object.keys(updateData).length === 0) {
+      throw new Error("No valid fields to update");
     }
 
-    locationsChanged = true;
-  }
+    const [updatedUser] = await db
+      .update(users)
+      .set(updateData)
+      .where(eq(users.id, userId))
+      .returning();
 
-  if (locationsChanged) {
-    updateData.locations = newLocations;
-
-    // Update isProfileComplete for customers based on locations
-    if (user.role === "customer") {
-      updateData.isProfileComplete = newLocations.length > 0;
-    }
-  }
-
-  if (updates.email) {
-    const existingUser = await db.query.users.findFirst({
-      where: and(eq(users.email, updates.email), sql`${users.id} != ${userId}`),
-    });
-
-    if (existingUser) {
-      throw new Error("Email already in use");
+    if (updates.email && updateData.otpCode) {
+      await sendVerificationOTPEmail(
+        updates.email,
+        updateData.otpCode,
+        updatedUser.name || "",
+      );
     }
 
-    updateData.email = updates.email;
-    updateData.emailVerified = false;
-
-    const otp = generateOTP();
-    updateData.otpCode = otp;
-    updateData.otpExpires = getOTPExpiration();
-    updateData.otpType = "verify";
+    return updatedUser;
+  } catch (error) {
+    if (tempFilePath) {
+      try {
+        await unlink(tempFilePath);
+      } catch (cleanupError) {
+        console.error("Failed to clean up temp file:", cleanupError);
+      }
+    }
+    throw error;
   }
-
-  if (Object.keys(updateData).length === 0) {
-    throw new Error("No valid fields to update");
-  }
-
-  const [updatedUser] = await db
-    .update(users)
-    .set(updateData)
-    .where(eq(users.id, userId))
-    .returning();
-
-  if (updates.email && updateData.otpCode) {
-    await sendVerificationOTPEmail(
-      updates.email,
-      updateData.otpCode,
-      updatedUser.name || "",
-    );
-  }
-
-  return updatedUser;
 };
 
-/**
- * Update Password
- */
 export const updateUserPassword = async (
   userId: string,
   currentPassword: string,
   newPassword: string,
 ) => {
-  const user = await db.query.users.findFirst({
-    where: eq(users.id, userId),
-  });
+  const user = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!user) {
     throw new Error("User not found");
@@ -2038,17 +2118,17 @@ export const updateUserPassword = async (
   return updatedUser;
 };
 
-/**
- * Reset Password with OTP
- */
 export const resetPassword = async (
   email: string,
   otp: string,
   newPassword: string,
 ) => {
-  const user = await db.query.users.findFirst({
-    where: eq(users.email, email),
-  });
+  const user = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!user) {
     throw new Error("User not found");
@@ -2088,13 +2168,13 @@ export const resetPassword = async (
   return updatedUser;
 };
 
-/**
- * Initiate Password Reset - Sends OTP
- */
 export const initiatePasswordReset = async (email: string) => {
-  const user = await db.query.users.findFirst({
-    where: eq(users.email, email),
-  });
+  const user = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1)
+    .then((rows) => rows[0]);
 
   if (!user) {
     return;
@@ -2112,45 +2192,29 @@ export const initiatePasswordReset = async (email: string) => {
   });
 };
 
-/**
- * Resend Verification OTP - WITH EXPLICIT FLUSH
- */
 export const resendVerificationOTP = async (email: string) => {
-  console.log("=== RESEND VERIFICATION OTP ===");
-  console.log("Timestamp:", new Date().toISOString());
-  console.log("Email:", email);
-
-  // Normalize email for consistency
   const normalizedEmail = email.trim().toLowerCase();
 
-  // Use a transaction to ensure consistency
   return await db
     .transaction(async (tx) => {
-      const user = await tx.query.users.findFirst({
-        where: sql`LOWER(TRIM(${users.email})) = ${normalizedEmail}`,
-      });
+      const user = await tx
+        .select(selectUserColumns)
+        .from(users)
+        .where(sql`LOWER(TRIM(${users.email})) = ${normalizedEmail}`)
+        .limit(1)
+        .then((rows) => rows[0]);
 
       if (!user) {
-        console.log("❌ User not found");
         throw new Error("User not found");
       }
 
-      console.log("✅ User found:", user.id);
-      console.log("Current emailVerified:", user.emailVerified);
-
       if (user.emailVerified) {
-        console.log("❌ Email already verified");
         throw new Error("Email already verified");
       }
 
       const otp = generateOTP();
-      console.log("Generated OTP:", otp);
-
-      // Store OTP within the transaction
       await storeOTP(user.id, otp, "verify", tx);
 
-      // Send email AFTER transaction commits (moved outside)
-      // Store email details to send after transaction
       return {
         userId: user.id,
         email: user.email,
@@ -2159,11 +2223,7 @@ export const resendVerificationOTP = async (email: string) => {
       };
     })
     .then(async (data) => {
-      // Send email after transaction is committed
       await sendVerificationOTPEmail(data.email, data.otp, data.name || "");
-
-      console.log("✅ OTP sent for user:", data.userId);
-      console.log("=== END RESEND ===");
 
       return {
         success: true,

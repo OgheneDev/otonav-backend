@@ -44,9 +44,6 @@ const successResponse = (
   });
 };
 
-/**
- * Register a Business (Owner)
- */
 export const registerBusinessController = async (
   req: Request,
   res: Response,
@@ -94,9 +91,6 @@ export const registerBusinessController = async (
   }
 };
 
-/**
- * Register a Customer (Public registration)
- */
 export const registerCustomerController = async (
   req: Request,
   res: Response,
@@ -122,7 +116,7 @@ export const registerCustomerController = async (
         role: customer.role,
         emailVerified: customer.emailVerified,
         registrationStatus: customer.registrationStatus,
-        isProfileComplete: customer.isProfileComplete, // NEW
+        isProfileComplete: customer.isProfileComplete,
         otp: customer.otp,
       },
       "Customer registration successful. Please check your email for OTP to verify your account.",
@@ -132,9 +126,6 @@ export const registerCustomerController = async (
   }
 };
 
-/**
- * Login User
- */
 export const loginController = async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
@@ -155,7 +146,6 @@ export const loginController = async (req: Request, res: Response) => {
       maxAge: 30 * 24 * 60 * 60 * 1000,
     });
 
-    // Extract organizations and determine if user has a default org
     const userOrgs = result.user.organizations || [];
     const defaultOrgId = userOrgs.length === 1 ? userOrgs[0].orgId : null;
     const defaultRole =
@@ -166,24 +156,24 @@ export const loginController = async (req: Request, res: Response) => {
         id: result.user.id,
         email: result.user.email,
         name: result.user.name,
-        role: result.user.role, // Global role
+        role: result.user.role,
         emailVerified: result.user.emailVerified,
         registrationStatus: result.user.registrationStatus,
         phoneNumber: result.user.phoneNumber,
-        organizations: userOrgs, // Include user's organizations
+        isProfileComplete: result.user.isProfileComplete,
+        profileImage: result.user.profileImage,
+        organizations: userOrgs,
       },
       accessToken: result.accessToken,
       expiresIn: 7 * 24 * 60 * 60,
     };
 
-    // Add location data based on role
     if (result.user.role === "customer") {
       responseData.user.locations = result.user.locations || [];
     } else if (result.user.role === "rider") {
       responseData.user.currentLocation = result.user.currentLocation;
     }
 
-    // Include default org info if available
     if (defaultOrgId) {
       responseData.user.defaultOrgId = defaultOrgId;
       responseData.user.defaultOrgRole = defaultRole;
@@ -195,9 +185,6 @@ export const loginController = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * Verify Email with OTP
- */
 export const verifyEmailWithOTPController = async (
   req: Request,
   res: Response,
@@ -224,9 +211,6 @@ export const verifyEmailWithOTPController = async (
   }
 };
 
-/**
- * Resend Verification OTP
- */
 export const resendOTPController = async (req: Request, res: Response) => {
   try {
     const { email } = req.body;
@@ -246,9 +230,6 @@ export const resendOTPController = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * Refresh Access Token
- */
 export const refreshTokenController = async (req: Request, res: Response) => {
   try {
     const refreshToken = req.cookies.refreshToken || req.body.refreshToken;
@@ -275,9 +256,6 @@ export const refreshTokenController = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * Logout User
- */
 export const logoutController = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
@@ -299,9 +277,6 @@ export const logoutController = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * Get Current User Profile - UPDATED to return location data based on role
- */
 export const getProfileController = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
@@ -321,9 +296,6 @@ export const getProfileController = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * Update User Profile Controller
- */
 export const updateProfileController = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
@@ -343,15 +315,15 @@ export const updateProfileController = async (req: Request, res: Response) => {
       });
     }
 
-    // Update allowed fields to include location operations
     const allowedFields = [
       "name",
       "email",
       "phoneNumber",
-      "locations", // Replace all locations
-      "addLocation", // Add a new location
-      "removeLocation", // Remove a location by index or label
-      "updateLocation", // Update a location by index
+      "profileImage",
+      "locations",
+      "addLocation",
+      "removeLocation",
+      "updateLocation",
     ];
 
     const invalidFields = Object.keys(updates).filter(
@@ -367,7 +339,30 @@ export const updateProfileController = async (req: Request, res: Response) => {
       });
     }
 
-    // Validate location operations
+    if (updates.profileImage !== undefined) {
+      if (updates.profileImage !== null && updates.profileImage !== "") {
+        if (
+          !updates.profileImage.startsWith("data:image/") &&
+          !updates.profileImage.startsWith("http")
+        ) {
+          return res.status(400).json({
+            success: false,
+            message: "profileImage must be a base64 image string or a URL",
+          });
+        }
+
+        if (updates.profileImage.startsWith("data:image/")) {
+          const base64Size = Buffer.from(updates.profileImage).length;
+          if (base64Size > 7 * 1024 * 1024) {
+            return res.status(400).json({
+              success: false,
+              message: "Image size must be less than 5MB",
+            });
+          }
+        }
+      }
+    }
+
     if (updates.locations && !Array.isArray(updates.locations)) {
       return res.status(400).json({
         success: false,
@@ -395,7 +390,6 @@ export const updateProfileController = async (req: Request, res: Response) => {
 
     const updatedUser = await updateUserProfile(userId, updates);
 
-    // Build response with appropriate location data
     const responseData: any = {
       id: updatedUser.id,
       email: updatedUser.email,
@@ -404,10 +398,10 @@ export const updateProfileController = async (req: Request, res: Response) => {
       role: updatedUser.role,
       emailVerified: updatedUser.emailVerified,
       registrationStatus: updatedUser.registrationStatus,
-      isProfileComplete: updatedUser.isProfileComplete, // NEW
+      isProfileComplete: updatedUser.isProfileComplete,
+      profileImage: updatedUser.profileImage,
     };
 
-    // Add location data based on role
     if (updatedUser.role === "customer") {
       responseData.locations = updatedUser.locations || [];
     } else if (updatedUser.role === "rider") {
@@ -426,9 +420,6 @@ export const updateProfileController = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * Create Rider Account (Owner only) - New version with registration/invitation links
- */
 export const createRiderAccountController = async (
   req: Request,
   res: Response,
@@ -480,9 +471,6 @@ export const createRiderAccountController = async (
   }
 };
 
-/**
- * Complete Rider Registration via Token (Public)
- */
 export const completeRiderRegistrationViaTokenController = async (
   req: Request,
   res: Response,
@@ -527,9 +515,6 @@ export const completeRiderRegistrationViaTokenController = async (
   }
 };
 
-/**
- * Accept Invitation (Public)
- */
 export const acceptInvitationController = async (
   req: Request,
   res: Response,
@@ -561,9 +546,6 @@ export const acceptInvitationController = async (
   }
 };
 
-/**
- * Resend Rider Invitation
- */
 export const resendRiderInvitationController = async (
   req: Request,
   res: Response,
@@ -595,9 +577,6 @@ export const resendRiderInvitationController = async (
   }
 };
 
-/**
- * Cancel Rider Invitation
- */
 export const cancelRiderInvitationController = async (
   req: Request,
   res: Response,
@@ -629,9 +608,6 @@ export const cancelRiderInvitationController = async (
   }
 };
 
-/**
- * Create Customer Account (Business Owner Action)
- */
 export const createCustomerAccountController = async (
   req: Request,
   res: Response,
@@ -677,9 +653,6 @@ export const createCustomerAccountController = async (
   }
 };
 
-/**
- * Resend Customer Registration Link
- */
 export const resendCustomerRegistrationLinkController = async (
   req: Request,
   res: Response,
@@ -715,9 +688,6 @@ export const resendCustomerRegistrationLinkController = async (
   }
 };
 
-/**
- * Complete Customer Registration via Token (Public)
- */
 export const completeCustomerRegistrationViaTokenController = async (
   req: Request,
   res: Response,
@@ -764,9 +734,6 @@ export const completeCustomerRegistrationViaTokenController = async (
   }
 };
 
-/**
- * Update Password
- */
 export const updatePasswordController = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
@@ -813,9 +780,6 @@ export const updatePasswordController = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * Forgot Password - Sends OTP
- */
 export const forgotPasswordController = async (req: Request, res: Response) => {
   try {
     const { email } = req.body;
@@ -839,9 +803,6 @@ export const forgotPasswordController = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * Reset Password with OTP
- */
 export const resetPasswordController = async (req: Request, res: Response) => {
   try {
     const { email, otp, newPassword } = req.body;
@@ -876,9 +837,6 @@ export const resetPasswordController = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * Switch Organization Context
- */
 export const switchOrganizationController = async (
   req: Request,
   res: Response,
@@ -901,8 +859,6 @@ export const switchOrganizationController = async (
       });
     }
 
-    // This would be implemented in a separate organization service
-    // For now, return a placeholder response
     return successResponse(
       res,
       {
@@ -910,6 +866,52 @@ export const switchOrganizationController = async (
         requestedOrgId: orgId,
       },
       "Organization switching endpoint",
+    );
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+// Optional: Separate endpoint for profile image upload only
+export const uploadProfileImageController = async (
+  req: Request,
+  res: Response,
+) => {
+  try {
+    const userId = (req as any).user?.userId;
+    const { image } = req.body;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    if (!image) {
+      return res.status(400).json({
+        success: false,
+        message: "Image is required",
+      });
+    }
+
+    if (!image.startsWith("data:image/")) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid image format. Must be base64 encoded image",
+      });
+    }
+
+    const updatedUser = await updateUserProfile(userId, {
+      profileImage: image,
+    });
+
+    return successResponse(
+      res,
+      {
+        profileImage: updatedUser.profileImage,
+      },
+      "Profile image updated successfully",
     );
   } catch (error) {
     return handleError(res, error);
