@@ -25,8 +25,8 @@ export interface Rider {
   emailVerified: boolean;
   lastLoginAt: Date | null;
   createdAt: Date;
-  registrationCompleted: boolean | null;
-  registrationStatus: RegistrationStatus | null; // Can be null
+  registrationStatus: RegistrationStatus | null;
+  isProfileComplete: boolean;
 
   // Organization-specific information
   orgMembership: {
@@ -35,7 +35,7 @@ export interface Rider {
     role: string;
     isActive: boolean;
     isSuspended: boolean;
-    registrationStatus: RegistrationStatus | null; // Can be null
+    registrationStatus: RegistrationStatus | null;
     invitedAt: Date | null;
     invitationSentAt: Date | null;
     joinedAt: Date | null;
@@ -57,7 +57,7 @@ export class RiderService {
   async getRidersByOrganization(
     orgId: string,
     includeSuspended: boolean = false,
-    includePending: boolean = true
+    includePending: boolean = true,
   ): Promise<Rider[]> {
     try {
       const whereConditions = [
@@ -101,8 +101,8 @@ export class RiderService {
           emailVerified: users.emailVerified,
           lastLoginAt: users.lastLoginAt,
           createdAt: users.createdAt,
-          registrationCompleted: users.registrationCompleted,
           registrationStatus: users.registrationStatus,
+          isProfileComplete: users.isProfileComplete,
         })
         .from(users)
         .where(inArray(users.id, userIds));
@@ -137,7 +137,7 @@ export class RiderService {
       // Filter out pending riders if requested
       if (!includePending) {
         return riders.filter(
-          (rider) => rider.orgMembership.registrationStatus !== "pending"
+          (rider) => rider.orgMembership.registrationStatus !== "pending",
         );
       }
 
@@ -174,8 +174,8 @@ export class RiderService {
           and(
             eq(userOrganizations.userId, riderId),
             eq(userOrganizations.orgId, orgId),
-            eq(userOrganizations.role, "rider")
-          )
+            eq(userOrganizations.role, "rider"),
+          ),
         )
         .limit(1);
 
@@ -191,8 +191,8 @@ export class RiderService {
           emailVerified: users.emailVerified,
           lastLoginAt: users.lastLoginAt,
           createdAt: users.createdAt,
-          registrationCompleted: users.registrationCompleted,
           registrationStatus: users.registrationStatus,
+          isProfileComplete: users.isProfileComplete,
         })
         .from(users)
         .where(eq(users.id, riderId))
@@ -237,8 +237,8 @@ export class RiderService {
           and(
             eq(userOrganizations.userId, riderId),
             eq(userOrganizations.orgId, orgId),
-            eq(userOrganizations.role, "rider")
-          )
+            eq(userOrganizations.role, "rider"),
+          ),
         )
         .limit(1);
 
@@ -256,7 +256,7 @@ export class RiderService {
     riderId: string,
     orgId: string,
     actorUserId: string,
-    data: UpdateRiderStatusInput = {}
+    data: UpdateRiderStatusInput = {},
   ): Promise<Rider> {
     try {
       // First, verify the rider exists and belongs to the organization
@@ -273,7 +273,7 @@ export class RiderService {
       const suspensionDuration = data.suspensionDurationDays || 30;
       const suspensionExpires = new Date();
       suspensionExpires.setDate(
-        suspensionExpires.getDate() + suspensionDuration
+        suspensionExpires.getDate() + suspensionDuration,
       );
 
       // Update suspension status in user_organizations
@@ -288,8 +288,8 @@ export class RiderService {
         .where(
           and(
             eq(userOrganizations.userId, riderId),
-            eq(userOrganizations.orgId, orgId)
-          )
+            eq(userOrganizations.orgId, orgId),
+          ),
         );
 
       // Send suspension email
@@ -325,7 +325,7 @@ export class RiderService {
   async unsuspendRider(
     riderId: string,
     orgId: string,
-    actorUserId: string
+    actorUserId: string,
   ): Promise<Rider> {
     try {
       // First, verify the rider exists and belongs to the organization
@@ -350,8 +350,8 @@ export class RiderService {
         .where(
           and(
             eq(userOrganizations.userId, riderId),
-            eq(userOrganizations.orgId, orgId)
-          )
+            eq(userOrganizations.orgId, orgId),
+          ),
         );
 
       // Create audit log
@@ -380,7 +380,7 @@ export class RiderService {
     riderId: string,
     orgId: string,
     actorUserId: string,
-    data: UpdateRiderStatusInput = {}
+    data: UpdateRiderStatusInput = {},
   ): Promise<{ success: boolean; message: string; removedFromOrg: boolean }> {
     try {
       const rider = await this.getRiderById(riderId, orgId);
@@ -396,8 +396,8 @@ export class RiderService {
         .where(
           and(
             eq(userOrganizations.userId, riderId),
-            eq(userOrganizations.orgId, orgId)
-          )
+            eq(userOrganizations.orgId, orgId),
+          ),
         );
 
       // Send different email for pending vs active riders
@@ -440,7 +440,7 @@ export class RiderService {
    */
   private async sendInvitationCancelledEmail(
     rider: Rider,
-    reason?: string
+    reason?: string,
   ): Promise<void> {
     try {
       const emailData = {
@@ -517,7 +517,7 @@ export class RiderService {
   private async sendSuspensionEmail(
     rider: Rider,
     reason?: string,
-    suspensionDurationDays: number = 30
+    suspensionDurationDays: number = 30,
   ): Promise<void> {
     try {
       const emailData = {
@@ -697,8 +697,8 @@ export class RiderService {
           and(
             eq(userOrganizations.userId, riderId),
             eq(userOrganizations.orgId, orgId),
-            eq(userOrganizations.role, "rider")
-          )
+            eq(userOrganizations.role, "rider"),
+          ),
         )
         .limit(1);
 
@@ -719,7 +719,7 @@ export class RiderService {
       role: string;
       isActive: boolean;
       isSuspended: boolean;
-      joinedAt: Date | null; // Updated to allow null
+      joinedAt: Date | null;
     }>
   > {
     try {
@@ -751,7 +751,7 @@ export class RiderService {
     riderId: string,
     orgId: string,
     actorUserId: string,
-    reason?: string
+    reason?: string,
   ): Promise<Rider> {
     try {
       const rider = await this.getRiderById(riderId, orgId);
@@ -769,8 +769,8 @@ export class RiderService {
         .where(
           and(
             eq(userOrganizations.userId, riderId),
-            eq(userOrganizations.orgId, orgId)
-          )
+            eq(userOrganizations.orgId, orgId),
+          ),
         );
 
       // Create audit log
@@ -797,7 +797,7 @@ export class RiderService {
   async reactivateRider(
     riderId: string,
     orgId: string,
-    actorUserId: string
+    actorUserId: string,
   ): Promise<Rider> {
     try {
       const rider = await this.getRiderById(riderId, orgId);
@@ -814,8 +814,8 @@ export class RiderService {
         .where(
           and(
             eq(userOrganizations.userId, riderId),
-            eq(userOrganizations.orgId, orgId)
-          )
+            eq(userOrganizations.orgId, orgId),
+          ),
         );
 
       // Create audit log

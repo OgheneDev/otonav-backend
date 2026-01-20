@@ -8,8 +8,8 @@ export interface Customer {
   name: string | null;
   phoneNumber: string | null;
   emailVerified: boolean;
-  registrationCompleted: boolean | null;
   registrationStatus: "pending" | "completed" | "cancelled" | "expired" | null;
+  isProfileComplete: boolean;
   createdAt: Date;
   lastLoginAt: Date | null;
 }
@@ -27,8 +27,8 @@ export class CustomerService {
           name: users.name,
           phoneNumber: users.phoneNumber,
           emailVerified: users.emailVerified,
-          registrationCompleted: users.registrationCompleted,
           registrationStatus: users.registrationStatus,
+          isProfileComplete: users.isProfileComplete,
           createdAt: users.createdAt,
           lastLoginAt: users.lastLoginAt,
         })
@@ -55,8 +55,8 @@ export class CustomerService {
           name: users.name,
           phoneNumber: users.phoneNumber,
           emailVerified: users.emailVerified,
-          registrationCompleted: users.registrationCompleted,
           registrationStatus: users.registrationStatus,
+          isProfileComplete: users.isProfileComplete,
           createdAt: users.createdAt,
           lastLoginAt: users.lastLoginAt,
         })
@@ -83,8 +83,8 @@ export class CustomerService {
           name: users.name,
           phoneNumber: users.phoneNumber,
           emailVerified: users.emailVerified,
-          registrationCompleted: users.registrationCompleted,
           registrationStatus: users.registrationStatus,
+          isProfileComplete: users.isProfileComplete,
           createdAt: users.createdAt,
           lastLoginAt: users.lastLoginAt,
         })
@@ -97,7 +97,7 @@ export class CustomerService {
         (customer) =>
           customer.email.toLowerCase().includes(query.toLowerCase()) ||
           (customer.name &&
-            customer.name.toLowerCase().includes(query.toLowerCase()))
+            customer.name.toLowerCase().includes(query.toLowerCase())),
       );
     } catch (error) {
       console.error("Error searching customers:", error);
@@ -120,13 +120,13 @@ export class CustomerService {
       const total = customers.length;
       const verified = customers.filter((c) => c.emailVerified).length;
       const pending = customers.filter(
-        (c) => c.registrationStatus === "pending"
+        (c) => c.registrationStatus === "pending",
       ).length;
       const active = customers.filter(
         (c) =>
           c.registrationStatus === "completed" &&
           c.emailVerified &&
-          c.registrationCompleted
+          c.isProfileComplete,
       ).length;
 
       return {
