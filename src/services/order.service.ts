@@ -1,5 +1,10 @@
 import { db } from "../config/database.js";
-import { orders, users, userOrganizations } from "../models/schema.js";
+import {
+  orders,
+  users,
+  userOrganizations,
+  organizations,
+} from "../models/schema.js";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { sendEmail } from "./email.service.js";
 
@@ -30,7 +35,7 @@ export class OrderService {
           eq(userOrganizations.userId, ownerUserId),
           eq(userOrganizations.orgId, orgId),
           eq(userOrganizations.role, "owner"),
-          eq(userOrganizations.isActive, true)
+          eq(userOrganizations.isActive, true),
         ),
       });
 
@@ -42,7 +47,7 @@ export class OrderService {
         where: and(
           eq(users.id, dto.customerId),
           eq(users.role, "customer"),
-          eq(users.emailVerified, true)
+          eq(users.emailVerified, true),
         ),
       });
 
@@ -55,7 +60,7 @@ export class OrderService {
           eq(userOrganizations.userId, dto.riderId),
           eq(userOrganizations.orgId, orgId),
           eq(userOrganizations.role, "rider"),
-          eq(userOrganizations.isActive, true)
+          eq(userOrganizations.isActive, true),
         ),
       });
 
@@ -130,6 +135,29 @@ export class OrderService {
 
     const enhancedOrders = await Promise.all(
       ordersList.map(async (order) => {
+        // Get organization details
+        const org = await db.query.organizations.findFirst({
+          where: eq(organizations.id, order.orgId),
+          columns: {
+            id: true,
+            name: true,
+            ownerUserId: true,
+          },
+        });
+
+        // Get owner details if ownerUserId exists
+        let owner = null;
+        if (org?.ownerUserId) {
+          owner = await db.query.users.findFirst({
+            where: eq(users.id, org.ownerUserId),
+            columns: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          });
+        }
+
         const [customer, rider] = await Promise.all([
           db.query.users.findFirst({
             where: eq(users.id, order.customerId),
@@ -157,10 +185,21 @@ export class OrderService {
 
         return {
           ...order,
+          organization: {
+            id: org?.id,
+            name: org?.name,
+            owner: owner
+              ? {
+                  id: owner.id,
+                  name: owner.name,
+                  email: owner.email,
+                }
+              : null,
+          },
           customer,
           rider,
         };
-      })
+      }),
     );
 
     return enhancedOrders;
@@ -170,7 +209,7 @@ export class OrderService {
     orderId: string,
     userId: string,
     userRole: string,
-    orgId?: string
+    orgId?: string,
   ) {
     let conditions: any[] = [eq(orders.id, orderId)];
 
@@ -186,30 +225,35 @@ export class OrderService {
     }
 
     const order = await db
-      .select({
-        id: orders.id,
-        orderNumber: orders.orderNumber,
-        orgId: orders.orgId,
-        packageDescription: orders.packageDescription,
-        customerId: orders.customerId,
-        riderId: orders.riderId,
-        riderCurrentLocation: orders.riderCurrentLocation,
-        customerLocationLabel: orders.customerLocationLabel,
-        customerLocationPrecise: orders.customerLocationPrecise,
-        status: orders.status,
-        assignedAt: orders.assignedAt,
-        riderAcceptedAt: orders.riderAcceptedAt,
-        customerLocationSetAt: orders.customerLocationSetAt,
-        deliveredAt: orders.deliveredAt,
-        cancelledAt: orders.cancelledAt,
-        createdAt: orders.createdAt,
-        updatedAt: orders.updatedAt,
-      })
+      .select()
       .from(orders)
       .where(and(...conditions));
 
     if (order.length === 0) {
       throw new Error("Order not found");
+    }
+
+    // Get organization details
+    const org = await db.query.organizations.findFirst({
+      where: eq(organizations.id, order[0].orgId),
+      columns: {
+        id: true,
+        name: true,
+        ownerUserId: true,
+      },
+    });
+
+    // Get owner details if ownerUserId exists
+    let owner = null;
+    if (org?.ownerUserId) {
+      owner = await db.query.users.findFirst({
+        where: eq(users.id, org.ownerUserId),
+        columns: {
+          id: true,
+          name: true,
+          email: true,
+        },
+      });
     }
 
     const [customer, rider] = await Promise.all([
@@ -239,6 +283,17 @@ export class OrderService {
 
     return {
       ...order[0],
+      organization: {
+        id: org?.id,
+        name: org?.name,
+        owner: owner
+          ? {
+              id: owner.id,
+              name: owner.name,
+              email: owner.email,
+            }
+          : null,
+      },
       customer,
       rider,
     };
@@ -247,20 +302,20 @@ export class OrderService {
   async riderAcceptOrder(
     orderId: string,
     riderId: string,
-    currentLocation: string
+    currentLocation: string,
   ) {
     return await db.transaction(async (tx) => {
       const order = await tx.query.orders.findFirst({
         where: and(
           eq(orders.id, orderId),
           eq(orders.riderId, riderId),
-          sql`${orders.status} IN ('pending', 'customer_location_set')`
+          sql`${orders.status} IN ('pending', 'customer_location_set')`,
         ),
       });
 
       if (!order) {
         throw new Error(
-          "Order not found or not in a state that can be accepted"
+          "Order not found or not in a state that can be accepted",
         );
       }
 
@@ -298,20 +353,20 @@ export class OrderService {
   async setCustomerLocation(
     orderId: string,
     customerId: string,
-    dto: AssignLocationDTO
+    dto: AssignLocationDTO,
   ) {
     return await db.transaction(async (tx) => {
       const order = await tx.query.orders.findFirst({
         where: and(
           eq(orders.id, orderId),
           eq(orders.customerId, customerId),
-          sql`${orders.status} IN ('pending', 'rider_accepted')`
+          sql`${orders.status} IN ('pending', 'rider_accepted')`,
         ),
       });
 
       if (!order) {
         throw new Error(
-          "Order not found or not in a state that can have location set"
+          "Order not found or not in a state that can have location set",
         );
       }
 
@@ -344,7 +399,7 @@ export class OrderService {
     orderId: string,
     ownerId: string,
     orgId: string,
-    dto: AssignLocationDTO
+    dto: AssignLocationDTO,
   ) {
     return await db.transaction(async (tx) => {
       const ownerMembership = await tx.query.userOrganizations.findFirst({
@@ -352,7 +407,7 @@ export class OrderService {
           eq(userOrganizations.userId, ownerId),
           eq(userOrganizations.orgId, orgId),
           eq(userOrganizations.role, "owner"),
-          eq(userOrganizations.isActive, true)
+          eq(userOrganizations.isActive, true),
         ),
       });
 
@@ -364,13 +419,13 @@ export class OrderService {
         where: and(
           eq(orders.id, orderId),
           eq(orders.orgId, orgId),
-          sql`${orders.status} IN ('pending', 'rider_accepted')`
+          sql`${orders.status} IN ('pending', 'rider_accepted')`,
         ),
       });
 
       if (!order) {
         throw new Error(
-          "Order not found or not in a state that can have location set"
+          "Order not found or not in a state that can have location set",
         );
       }
 
@@ -393,12 +448,12 @@ export class OrderService {
         | undefined;
 
       const savedLocation = customerLocations?.find(
-        (loc) => loc.label === dto.locationLabel
+        (loc) => loc.label === dto.locationLabel,
       );
 
       if (!savedLocation) {
         throw new Error(
-          "Location label not found in customer's saved locations"
+          "Location label not found in customer's saved locations",
         );
       }
 
@@ -433,7 +488,7 @@ export class OrderService {
         where: and(
           eq(orders.id, orderId),
           eq(orders.riderId, riderId),
-          eq(orders.status, "confirmed")
+          eq(orders.status, "confirmed"),
         ),
       });
 
@@ -458,20 +513,20 @@ export class OrderService {
   async getCustomerLocationLabels(
     orderId: string,
     orgId: string,
-    ownerId: string
+    ownerId: string,
   ) {
     const ownerMembership = await db.query.userOrganizations.findFirst({
       where: and(
         eq(userOrganizations.userId, ownerId),
         eq(userOrganizations.orgId, orgId),
         eq(userOrganizations.role, "owner"),
-        eq(userOrganizations.isActive, true)
+        eq(userOrganizations.isActive, true),
       ),
     });
 
     if (!ownerMembership) {
       throw new Error(
-        "Only organization owners can view customer location labels"
+        "Only organization owners can view customer location labels",
       );
     }
 
@@ -512,7 +567,7 @@ export class OrderService {
     orderId: string,
     userId: string,
     userRole: string,
-    orgId?: string
+    orgId?: string,
   ) {
     let conditions: any[] = [eq(orders.id, orderId)];
 
@@ -556,7 +611,7 @@ export class OrderService {
   private async sendAssignmentNotifications(
     order: any,
     customer: any,
-    rider: any
+    rider: any,
   ) {
     try {
       if (customer.email) {

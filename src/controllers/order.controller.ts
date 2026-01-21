@@ -15,7 +15,7 @@ export class OrderController {
       const order = await orderService.createOrder(
         user!.orgId!,
         user!.userId,
-        dto
+        dto,
       );
 
       return res.status(201).json({
@@ -44,7 +44,7 @@ export class OrderController {
         orderIdString,
         user!.userId,
         user!.role || "",
-        orgId
+        orgId,
       );
 
       return res.status(200).json({
@@ -69,7 +69,7 @@ export class OrderController {
       const orders = await orderService.getOrders(
         user!.userId,
         user!.role || "",
-        orgId
+        orgId,
       );
 
       return res.status(200).json({
@@ -103,7 +103,7 @@ export class OrderController {
       const order = await orderService.riderAcceptOrder(
         orderIdString,
         user!.userId,
-        currentLocation
+        currentLocation,
       );
 
       return res.status(200).json({
@@ -138,7 +138,7 @@ export class OrderController {
       const order = await orderService.setCustomerLocation(
         orderIdString,
         user!.userId,
-        dto
+        dto,
       );
 
       return res.status(200).json({
@@ -174,7 +174,7 @@ export class OrderController {
         orderIdString,
         user!.userId,
         user!.orgId!,
-        dto
+        dto,
       );
 
       return res.status(200).json({
@@ -201,7 +201,7 @@ export class OrderController {
       const locations = await orderService.getCustomerLocationLabels(
         orderIdString,
         user!.orgId!,
-        user!.userId
+        user!.userId,
       );
 
       return res.status(200).json({
@@ -229,7 +229,7 @@ export class OrderController {
         orderIdString,
         user!.userId,
         user!.role || "",
-        orgId
+        orgId,
       );
 
       return res.status(200).json({
@@ -246,7 +246,6 @@ export class OrderController {
     }
   }
 
-  // NEW METHOD: Confirm delivery
   async confirmDelivery(req: AuthRequest, res: Response) {
     try {
       const { user } = req;
@@ -257,7 +256,7 @@ export class OrderController {
 
       const order = await orderService.confirmDelivery(
         orderIdString,
-        user!.userId
+        user!.userId,
       );
 
       return res.status(200).json({

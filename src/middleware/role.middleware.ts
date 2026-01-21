@@ -1,4 +1,3 @@
-// middleware/role.middleware.ts
 import { Request, Response, NextFunction } from "express";
 import { AuthRequest } from "./auth.middleware.js";
 import { db } from "../config/database.js";
@@ -26,7 +25,7 @@ export const authorizeRole = (allowedRoles: string[]) => {
           return res.status(403).json({
             success: false,
             message: `Insufficient permissions. Required roles: ${allowedRoles.join(
-              ", "
+              ", ",
             )}`,
           });
         }
@@ -38,7 +37,7 @@ export const authorizeRole = (allowedRoles: string[]) => {
         where: and(
           eq(userOrganizations.userId, user.userId),
           eq(userOrganizations.orgId, user.orgId),
-          eq(userOrganizations.isActive, true)
+          eq(userOrganizations.isActive, true),
         ),
       });
 
@@ -53,7 +52,7 @@ export const authorizeRole = (allowedRoles: string[]) => {
         return res.status(403).json({
           success: false,
           message: `Insufficient permissions in this organization. Required roles: ${allowedRoles.join(
-            ", "
+            ", ",
           )}`,
           userRoleInOrg: membership.role,
           currentOrgId: user.orgId,
@@ -77,7 +76,7 @@ export const authorizeRole = (allowedRoles: string[]) => {
 export const requireOrgOwner = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) => {
   try {
     const user = (req as AuthRequest).user;
@@ -94,7 +93,7 @@ export const requireOrgOwner = async (
         eq(userOrganizations.userId, user.userId),
         eq(userOrganizations.orgId, user.orgId),
         eq(userOrganizations.role, "owner"),
-        eq(userOrganizations.isActive, true)
+        eq(userOrganizations.isActive, true),
       ),
     });
 
@@ -121,7 +120,7 @@ export const requireOrgOwner = async (
 export const requireOrgRider = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) => {
   try {
     const user = (req as AuthRequest).user;
@@ -138,7 +137,7 @@ export const requireOrgRider = async (
         eq(userOrganizations.userId, user.userId),
         eq(userOrganizations.orgId, user.orgId),
         eq(userOrganizations.role, "rider"),
-        eq(userOrganizations.isActive, true)
+        eq(userOrganizations.isActive, true),
       ),
     });
 
@@ -165,7 +164,7 @@ export const requireOrgRider = async (
 export const requireRiderAccess = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) => {
   try {
     const user = (req as AuthRequest).user;
@@ -182,7 +181,7 @@ export const requireRiderAccess = async (
       where: and(
         eq(userOrganizations.userId, user.userId),
         eq(userOrganizations.orgId, user.orgId),
-        eq(userOrganizations.isActive, true)
+        eq(userOrganizations.isActive, true),
       ),
     });
 
