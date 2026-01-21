@@ -5,7 +5,7 @@ import {
   userOrganizations,
   organizations,
 } from "../models/schema.js";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { sendEmail } from "./email.service.js";
 
 export interface CreateOrderDTO {
@@ -19,7 +19,20 @@ export interface AssignLocationDTO {
   locationPrecise?: string;
 }
 
+// Order status transition map
+const ORDER_STATUS_TRANSITIONS: Record<string, string[]> = {
+  pending: ["rider_accepted", "customer_location_set", "cancelled"],
+  rider_accepted: ["confirmed", "cancelled"],
+  customer_location_set: ["confirmed", "cancelled"],
+  confirmed: ["delivered", "cancelled"],
+  delivered: [],
+  cancelled: [],
+};
+
 export class OrderService {
+  /**
+   * Generate unique order number
+   */
   private generateOrderNumber(): string {
     const timestamp = Date.now().toString().slice(-6);
     const random = Math.floor(Math.random() * 1000)
@@ -28,8 +41,84 @@ export class OrderService {
     return `ORD${timestamp}${random}`;
   }
 
+  /**
+   * Validate if status transition is allowed
+   */
+  private canTransitionTo(currentStatus: string, newStatus: string): boolean {
+    return (
+      ORDER_STATUS_TRANSITIONS[currentStatus]?.includes(newStatus) ?? false
+    );
+  }
+
+  /**
+   * Validate rider can perform order actions
+   */
+  private async validateRiderForOrder(
+    tx: any,
+    riderId: string,
+    orgId: string,
+    action: string,
+  ): Promise<void> {
+    // Check global rider activity
+    const rider = await tx.query.users.findFirst({
+      where: eq(users.id, riderId),
+      columns: {
+        id: true,
+        isActive: true,
+        role: true,
+      },
+    });
+
+    if (!rider) {
+      throw new Error("Rider not found");
+    }
+
+    if (rider.role !== "rider") {
+      throw new Error("User is not a rider");
+    }
+
+    if (!rider.isActive) {
+      throw new Error(
+        `You must be active to ${action}. Please toggle your activity status in the app.`,
+      );
+    }
+
+    // Check organization-specific status
+    const riderMembership = await tx.query.userOrganizations.findFirst({
+      where: and(
+        eq(userOrganizations.userId, riderId),
+        eq(userOrganizations.orgId, orgId),
+        eq(userOrganizations.role, "rider"),
+      ),
+      columns: {
+        isActive: true,
+        isSuspended: true,
+        suspensionReason: true,
+      },
+    });
+
+    if (!riderMembership) {
+      throw new Error("Rider membership not found in this organization");
+    }
+
+    if (!riderMembership.isActive) {
+      throw new Error(
+        `Your membership in this organization is inactive. Contact your administrator to ${action}.`,
+      );
+    }
+
+    if (riderMembership.isSuspended) {
+      const reason = riderMembership.suspensionReason || "policy violation";
+      throw new Error(`Cannot ${action} while suspended. Reason: ${reason}`);
+    }
+  }
+
+  /**
+   * Create a new order
+   */
   async createOrder(orgId: string, ownerUserId: string, dto: CreateOrderDTO) {
     return await db.transaction(async (tx) => {
+      // Verify owner has permission
       const ownerMembership = await tx.query.userOrganizations.findFirst({
         where: and(
           eq(userOrganizations.userId, ownerUserId),
@@ -43,6 +132,7 @@ export class OrderService {
         throw new Error("Only organization owners can create orders");
       }
 
+      // Verify customer exists and is verified
       const customer = await tx.query.users.findFirst({
         where: and(
           eq(users.id, dto.customerId),
@@ -55,6 +145,7 @@ export class OrderService {
         throw new Error("Customer not found or not verified");
       }
 
+      // Verify rider membership in organization
       const riderMembership = await tx.query.userOrganizations.findFirst({
         where: and(
           eq(userOrganizations.userId, dto.riderId),
@@ -65,17 +156,40 @@ export class OrderService {
       });
 
       if (!riderMembership) {
-        throw new Error("Rider is not a member of this organization");
+        throw new Error("Rider is not an active member of this organization");
       }
 
+      if (riderMembership.isSuspended) {
+        throw new Error("Cannot assign orders to suspended riders");
+      }
+
+      // Verify rider exists and is globally active
       const rider = await tx.query.users.findFirst({
         where: eq(users.id, dto.riderId),
+        columns: {
+          id: true,
+          email: true,
+          name: true,
+          isActive: true,
+          role: true,
+        },
       });
 
       if (!rider) {
         throw new Error("Rider not found");
       }
 
+      if (rider.role !== "rider") {
+        throw new Error("Assigned user is not a rider");
+      }
+
+      if (!rider.isActive) {
+        throw new Error(
+          "Rider is currently inactive and cannot be assigned orders",
+        );
+      }
+
+      // Create the order
       const [order] = await tx
         .insert(orders)
         .values({
@@ -89,12 +203,16 @@ export class OrderService {
         })
         .returning();
 
+      // Send notifications
       await this.sendAssignmentNotifications(order, customer, rider);
 
       return order;
     });
   }
 
+  /**
+   * Get all orders with optimized queries
+   */
   async getOrders(userId: string, userRole: string, orgId?: string) {
     let conditions: any[] = [];
 
@@ -109,8 +227,10 @@ export class OrderService {
       conditions.push(eq(orders.orgId, orgId));
     }
 
+    // Optimized query with joins
     const ordersList = await db
       .select({
+        // Order fields
         id: orders.id,
         orderNumber: orders.orderNumber,
         orgId: orders.orgId,
@@ -126,85 +246,114 @@ export class OrderService {
         customerLocationSetAt: orders.customerLocationSetAt,
         deliveredAt: orders.deliveredAt,
         cancelledAt: orders.cancelledAt,
+        cancelledBy: orders.cancelledBy,
+        cancellationReason: orders.cancellationReason,
         createdAt: orders.createdAt,
         updatedAt: orders.updatedAt,
+
+        // Organization fields
+        orgName: organizations.name,
+        orgOwnerUserId: organizations.ownerUserId,
+
+        // Customer fields (from join)
+        customerEmail: users.email,
+        customerName: users.name,
+        customerPhone: users.phoneNumber,
+        customerLocations: users.locations,
       })
       .from(orders)
+      .innerJoin(organizations, eq(orders.orgId, organizations.id))
+      .innerJoin(users, eq(orders.customerId, users.id))
       .where(and(...conditions))
       .orderBy(desc(orders.createdAt));
 
-    const enhancedOrders = await Promise.all(
-      ordersList.map(async (order) => {
-        // Get organization details
-        const org = await db.query.organizations.findFirst({
-          where: eq(organizations.id, order.orgId),
-          columns: {
-            id: true,
-            name: true,
-            ownerUserId: true,
-          },
-        });
+    // Batch fetch riders and owners
+    const riderIds = [
+      ...new Set(
+        ordersList
+          .map((o) => o.riderId)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
 
-        // Get owner details if ownerUserId exists
-        let owner = null;
-        if (org?.ownerUserId) {
-          owner = await db.query.users.findFirst({
-            where: eq(users.id, org.ownerUserId),
-            columns: {
-              id: true,
-              name: true,
-              email: true,
-            },
-          });
-        }
+    const ownerIds = [
+      ...new Set(
+        ordersList
+          .map((o) => o.orgOwnerUserId)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
 
-        const [customer, rider] = await Promise.all([
-          db.query.users.findFirst({
-            where: eq(users.id, order.customerId),
-            columns: {
-              id: true,
-              email: true,
-              name: true,
-              phoneNumber: true,
-              locations: true,
-            },
-          }),
-          order.riderId
-            ? db.query.users.findFirst({
-                where: eq(users.id, order.riderId),
-                columns: {
-                  id: true,
-                  email: true,
-                  name: true,
-                  phoneNumber: true,
-                  currentLocation: true,
-                },
-              })
-            : Promise.resolve(null),
-        ]);
+    const [riders, owners] = await Promise.all([
+      riderIds.length > 0
+        ? db
+            .select({
+              id: users.id,
+              email: users.email,
+              name: users.name,
+              phoneNumber: users.phoneNumber,
+              currentLocation: users.currentLocation,
+              isActive: users.isActive,
+            })
+            .from(users)
+            .where(inArray(users.id, riderIds))
+        : Promise.resolve([]),
+      ownerIds.length > 0
+        ? db
+            .select({
+              id: users.id,
+              name: users.name,
+              email: users.email,
+            })
+            .from(users)
+            .where(inArray(users.id, ownerIds))
+        : Promise.resolve([]),
+    ]);
 
-        return {
-          ...order,
-          organization: {
-            id: org?.id,
-            name: org?.name,
-            owner: owner
-              ? {
-                  id: owner.id,
-                  name: owner.name,
-                  email: owner.email,
-                }
-              : null,
-          },
-          customer,
-          rider,
-        };
-      }),
-    );
+    const riderMap = new Map(riders.map((r) => [r.id, r]));
+    const ownerMap = new Map(owners.map((o) => [o.id, o]));
 
-    return enhancedOrders;
+    return ordersList.map((order) => ({
+      id: order.id,
+      orderNumber: order.orderNumber,
+      orgId: order.orgId,
+      packageDescription: order.packageDescription,
+      customerId: order.customerId,
+      riderId: order.riderId,
+      riderCurrentLocation: order.riderCurrentLocation,
+      customerLocationLabel: order.customerLocationLabel,
+      customerLocationPrecise: order.customerLocationPrecise,
+      status: order.status,
+      assignedAt: order.assignedAt,
+      riderAcceptedAt: order.riderAcceptedAt,
+      customerLocationSetAt: order.customerLocationSetAt,
+      deliveredAt: order.deliveredAt,
+      cancelledAt: order.cancelledAt,
+      cancelledBy: order.cancelledBy,
+      cancellationReason: order.cancellationReason,
+      createdAt: order.createdAt,
+      updatedAt: order.updatedAt,
+      organization: {
+        id: order.orgId,
+        name: order.orgName,
+        owner: order.orgOwnerUserId
+          ? ownerMap.get(order.orgOwnerUserId) || null
+          : null,
+      },
+      customer: {
+        id: order.customerId,
+        email: order.customerEmail,
+        name: order.customerName,
+        phoneNumber: order.customerPhone,
+        locations: order.customerLocations,
+      },
+      rider: order.riderId ? riderMap.get(order.riderId) || null : null,
+    }));
   }
 
+  /**
+   * Get single order by ID with optimized query
+   */
   async getOrderById(
     orderId: string,
     userId: string,
@@ -224,26 +373,52 @@ export class OrderService {
       conditions.push(eq(orders.orgId, orgId));
     }
 
-    const order = await db
+    const [order] = await db
       .select()
       .from(orders)
-      .where(and(...conditions));
+      .where(and(...conditions))
+      .limit(1);
 
-    if (order.length === 0) {
-      throw new Error("Order not found");
+    if (!order) {
+      throw new Error("Order not found or you don't have access to it");
     }
 
-    // Get organization details
-    const org = await db.query.organizations.findFirst({
-      where: eq(organizations.id, order[0].orgId),
-      columns: {
-        id: true,
-        name: true,
-        ownerUserId: true,
-      },
-    });
+    // Fetch related data
+    const [org, customer, rider] = await Promise.all([
+      db.query.organizations.findFirst({
+        where: eq(organizations.id, order.orgId),
+        columns: {
+          id: true,
+          name: true,
+          ownerUserId: true,
+        },
+      }),
+      db.query.users.findFirst({
+        where: eq(users.id, order.customerId),
+        columns: {
+          id: true,
+          email: true,
+          name: true,
+          phoneNumber: true,
+          locations: true,
+        },
+      }),
+      order.riderId
+        ? db.query.users.findFirst({
+            where: eq(users.id, order.riderId),
+            columns: {
+              id: true,
+              email: true,
+              name: true,
+              phoneNumber: true,
+              currentLocation: true,
+              isActive: true,
+            },
+          })
+        : Promise.resolve(null),
+    ]);
 
-    // Get owner details if ownerUserId exists
+    // Get owner details if needed
     let owner = null;
     if (org?.ownerUserId) {
       owner = await db.query.users.findFirst({
@@ -256,33 +431,8 @@ export class OrderService {
       });
     }
 
-    const [customer, rider] = await Promise.all([
-      db.query.users.findFirst({
-        where: eq(users.id, order[0].customerId),
-        columns: {
-          id: true,
-          email: true,
-          name: true,
-          phoneNumber: true,
-          locations: true,
-        },
-      }),
-      order[0].riderId
-        ? db.query.users.findFirst({
-            where: eq(users.id, order[0].riderId),
-            columns: {
-              id: true,
-              email: true,
-              name: true,
-              phoneNumber: true,
-              currentLocation: true,
-            },
-          })
-        : Promise.resolve(null),
-    ]);
-
     return {
-      ...order[0],
+      ...order,
       organization: {
         id: org?.id,
         name: org?.name,
@@ -299,6 +449,9 @@ export class OrderService {
     };
   }
 
+  /**
+   * Rider accepts an order
+   */
   async riderAcceptOrder(
     orderId: string,
     riderId: string,
@@ -319,6 +472,15 @@ export class OrderService {
         );
       }
 
+      // Validate rider can perform this action
+      await this.validateRiderForOrder(
+        tx,
+        riderId,
+        order.orgId,
+        "accept orders",
+      );
+
+      // Determine next status based on current state
       let nextStatus: "rider_accepted" | "confirmed";
       if (order.status === "pending") {
         nextStatus = "rider_accepted";
@@ -326,6 +488,13 @@ export class OrderService {
         nextStatus = "confirmed";
       } else {
         throw new Error("Order cannot be accepted in current state");
+      }
+
+      // Validate status transition
+      if (!this.canTransitionTo(order.status, nextStatus)) {
+        throw new Error(
+          `Cannot transition from ${order.status} to ${nextStatus}`,
+        );
       }
 
       const [updatedOrder] = await tx
@@ -339,6 +508,7 @@ export class OrderService {
         .where(eq(orders.id, orderId))
         .returning();
 
+      // Update rider's current location
       await tx
         .update(users)
         .set({
@@ -350,6 +520,9 @@ export class OrderService {
     });
   }
 
+  /**
+   * Customer sets their delivery location
+   */
   async setCustomerLocation(
     orderId: string,
     customerId: string,
@@ -370,6 +543,7 @@ export class OrderService {
         );
       }
 
+      // Determine next status
       let nextStatus: "customer_location_set" | "confirmed";
       if (order.status === "pending") {
         nextStatus = "customer_location_set";
@@ -377,6 +551,13 @@ export class OrderService {
         nextStatus = "confirmed";
       } else {
         throw new Error("Location cannot be set in current state");
+      }
+
+      // Validate status transition
+      if (!this.canTransitionTo(order.status, nextStatus)) {
+        throw new Error(
+          `Cannot transition from ${order.status} to ${nextStatus}`,
+        );
       }
 
       const [updatedOrder] = await tx
@@ -395,6 +576,9 @@ export class OrderService {
     });
   }
 
+  /**
+   * Owner sets customer location from saved locations
+   */
   async ownerSetCustomerLocation(
     orderId: string,
     ownerId: string,
@@ -457,6 +641,7 @@ export class OrderService {
         );
       }
 
+      // Determine next status
       let nextStatus: "customer_location_set" | "confirmed";
       if (order.status === "pending") {
         nextStatus = "customer_location_set";
@@ -464,6 +649,13 @@ export class OrderService {
         nextStatus = "confirmed";
       } else {
         throw new Error("Location cannot be set in current state");
+      }
+
+      // Validate status transition
+      if (!this.canTransitionTo(order.status, nextStatus)) {
+        throw new Error(
+          `Cannot transition from ${order.status} to ${nextStatus}`,
+        );
       }
 
       const [updatedOrder] = await tx
@@ -482,6 +674,9 @@ export class OrderService {
     });
   }
 
+  /**
+   * Rider confirms delivery
+   */
   async confirmDelivery(orderId: string, riderId: string) {
     return await db.transaction(async (tx) => {
       const order = await tx.query.orders.findFirst({
@@ -494,6 +689,19 @@ export class OrderService {
 
       if (!order) {
         throw new Error("Order not found or not confirmed");
+      }
+
+      // Validate rider can perform this action
+      await this.validateRiderForOrder(
+        tx,
+        riderId,
+        order.orgId,
+        "confirm deliveries",
+      );
+
+      // Validate status transition
+      if (!this.canTransitionTo(order.status, "delivered")) {
+        throw new Error(`Cannot transition from ${order.status} to delivered`);
       }
 
       const [updatedOrder] = await tx
@@ -510,6 +718,9 @@ export class OrderService {
     });
   }
 
+  /**
+   * Get customer location labels for an order
+   */
   async getCustomerLocationLabels(
     orderId: string,
     orgId: string,
@@ -563,6 +774,9 @@ export class OrderService {
     );
   }
 
+  /**
+   * Cancel an order
+   */
   async cancelOrder(
     orderId: string,
     userId: string,
@@ -583,7 +797,7 @@ export class OrderService {
     });
 
     if (!order) {
-      throw new Error("Order not found");
+      throw new Error("Order not found or you don't have access to it");
     }
 
     if (userRole === "rider" && order.riderId !== userId) {
@@ -594,12 +808,22 @@ export class OrderService {
       throw new Error("Delivered orders cannot be cancelled");
     }
 
+    if (order.status === "cancelled") {
+      throw new Error("Order is already cancelled");
+    }
+
+    // Validate status transition
+    if (!this.canTransitionTo(order.status, "cancelled")) {
+      throw new Error(`Orders in ${order.status} status cannot be cancelled`);
+    }
+
     const [updatedOrder] = await db
       .update(orders)
       .set({
         status: "cancelled",
         cancelledAt: new Date(),
         cancelledBy: userId,
+        cancellationReason: `Cancelled by ${userRole}`,
         updatedAt: new Date(),
       })
       .where(eq(orders.id, orderId))
@@ -608,17 +832,23 @@ export class OrderService {
     return updatedOrder;
   }
 
+  /**
+   * Send assignment notifications to customer and rider
+   */
   private async sendAssignmentNotifications(
     order: any,
     customer: any,
     rider: any,
   ) {
     try {
+      const notifications = [];
+
       if (customer.email) {
-        await sendEmail({
-          to: customer.email,
-          subject: `New Package Assigned - ${order.orderNumber}`,
-          html: `
+        notifications.push(
+          sendEmail({
+            to: customer.email,
+            subject: `New Package Assigned - ${order.orderNumber}`,
+            html: `
             <h2>New Package Assigned</h2>
             <p>Hello ${customer.name || "Customer"},</p>
             <p>A new package has been assigned to you:</p>
@@ -629,14 +859,16 @@ export class OrderService {
             </ul>
             <p>Please go to the mobile app to set your delivery location.</p>
           `,
-        });
+          }),
+        );
       }
 
       if (rider.email) {
-        await sendEmail({
-          to: rider.email,
-          subject: `New Delivery Assignment - ${order.orderNumber}`,
-          html: `
+        notifications.push(
+          sendEmail({
+            to: rider.email,
+            subject: `New Delivery Assignment - ${order.orderNumber}`,
+            html: `
             <h2>New Delivery Assignment</h2>
             <p>Hello ${rider.name || "Rider"},</p>
             <p>You have been assigned a new delivery:</p>
@@ -647,10 +879,14 @@ export class OrderService {
             </ul>
             <p>Please go to the mobile app to accept this delivery.</p>
           `,
-        });
+          }),
+        );
       }
+
+      await Promise.all(notifications);
     } catch (error) {
       console.error("Failed to send assignment notifications:", error);
+      // Don't throw - we don't want email failures to block order creation
     }
   }
 }

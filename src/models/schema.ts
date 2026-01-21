@@ -109,6 +109,8 @@ export const users = pgTable("users", {
 
   isProfileComplete: boolean("is_profile_complete").default(false).notNull(),
 
+  isActive: boolean("is_active").default(true).notNull(),
+
   // For riders, store their current real-time location
   currentLocation: text("current_location"),
 

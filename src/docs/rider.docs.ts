@@ -47,6 +47,10 @@
  *         registrationCompleted:
  *           type: boolean
  *           nullable: true
+ *         isActive:
+ *           type: boolean
+ *           example: true
+ *           description: Global activity status (affects all organizations)
  *         orgMembership:
  *           type: object
  *           properties:
@@ -63,6 +67,7 @@
  *             isActive:
  *               type: boolean
  *               example: true
+ *               description: Organization-specific active status
  *             isSuspended:
  *               type: boolean
  *               example: false
@@ -115,6 +120,22 @@
  *           type: string
  *           example: "Temporary leave"
  *           nullable: true
+ *
+ *     RiderToggleActivityResponse:
+ *       type: object
+ *       properties:
+ *         isActive:
+ *           type: boolean
+ *           example: true
+ *           description: New global activity status
+ *         riderId:
+ *           type: string
+ *           format: uuid
+ *           example: "550e8400-e29b-41d4-a716-446655440000"
+ *         affectedOrganizations:
+ *           type: integer
+ *           example: 3
+ *           description: Number of organizations where the rider is active
  *
  *     RiderOrganizationsResponse:
  *       type: object
@@ -191,6 +212,18 @@
  *           example: "Rider suspended successfully"
  *         data:
  *           $ref: '#/components/schemas/Rider'
+ *
+ *     ToggleActivityResponse:
+ *       type: object
+ *       properties:
+ *         success:
+ *           type: boolean
+ *           example: true
+ *         message:
+ *           type: string
+ *           example: "You are now inactive across all organizations"
+ *         data:
+ *           $ref: '#/components/schemas/RiderToggleActivityResponse'
  *
  *     RemoveRiderResponse:
  *       type: object
@@ -795,6 +828,78 @@
  *               $ref: '#/components/schemas/ErrorResponse'
  *       404:
  *         description: Rider not found in organization
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+
+/**
+ * @swagger
+ * /api/riders/toggle-activity:
+ *   post:
+ *     summary: Toggle rider's global activity status
+ *     tags: [Riders]
+ *     description: |
+ *       Allows a rider to toggle their own global activity status.
+ *       This affects ALL organizations the rider belongs to.
+ *       **RIDER SELF-SERVICE ONLY**
+ *
+ *       **Actions:**
+ *       1. Toggles isActive field in users table
+ *       2. Creates audit log for each organization the rider belongs to
+ *       3. Returns affected organization count
+ *
+ *       **Important Notes:**
+ *       - This is a GLOBAL toggle - affects all organizations
+ *       - Organization-specific deactivation is different (see /deactivate endpoint)
+ *       - Riders use this to indicate they're "available" or "unavailable" globally
+ *       - Does NOT affect suspension status
+ *
+ *       **Middleware Chain:**
+ *       1. authenticateToken - Valid JWT
+ *       2. authorizeRole - Must be a rider
+ *
+ *       **Use Cases:**
+ *       - Rider going on vacation/unavailable temporarily
+ *       - Rider wants to pause work across all organizations
+ *       - Quick availability toggle from mobile app
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Activity status toggled successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ToggleActivityResponse'
+ *             example:
+ *               success: true
+ *               message: "You are now inactive across all organizations"
+ *               data:
+ *                 isActive: false
+ *                 riderId: "550e8400-e29b-41d4-a716-446655440000"
+ *                 affectedOrganizations: 3
+ *       401:
+ *         description: Unauthorized - Invalid or missing JWT token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       403:
+ *         description: Forbidden - User is not a rider
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       404:
+ *         description: Rider not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       500:
+ *         description: Internal server error
  *         content:
  *           application/json:
  *             schema:

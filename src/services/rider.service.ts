@@ -1,11 +1,6 @@
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { db } from "../config/database.js";
-import {
-  users,
-  organizations,
-  auditLogs,
-  userOrganizations,
-} from "../models/schema.js";
+import { users, organizations, userOrganizations } from "../models/schema.js";
 import { sendEmail } from "./email.service.js";
 import { createAuditLog } from "./audit.service.js";
 
@@ -832,6 +827,85 @@ export class RiderService {
       return (await this.getRiderById(riderId, orgId)) as Rider;
     } catch (error) {
       console.error("Error reactivating rider:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Toggle rider's global activity status (affects all organizations)
+   */
+  async toggleActivity(riderId: string): Promise<{
+    isActive: boolean;
+    riderId: string;
+    affectedOrganizations: number;
+  }> {
+    try {
+      // Get current rider status
+      const [rider] = await db
+        .select({
+          isActive: users.isActive,
+          role: users.role,
+        })
+        .from(users)
+        .where(eq(users.id, riderId))
+        .limit(1);
+
+      if (!rider) {
+        throw new Error("Rider not found");
+      }
+
+      if (rider.role !== "rider") {
+        throw new Error("User is not a rider");
+      }
+
+      // Toggle the activity status
+      const newStatus = !rider.isActive;
+
+      await db
+        .update(users)
+        .set({
+          isActive: newStatus,
+        })
+        .where(eq(users.id, riderId));
+
+      // Get count of organizations affected
+      const organizations = await db
+        .select({ orgId: userOrganizations.orgId })
+        .from(userOrganizations)
+        .where(
+          and(
+            eq(userOrganizations.userId, riderId),
+            eq(userOrganizations.role, "rider"),
+            eq(userOrganizations.isActive, true),
+          ),
+        );
+
+      // Create audit log for each organization
+      for (const org of organizations) {
+        await createAuditLog({
+          orgId: org.orgId,
+          userId: riderId,
+          action: newStatus
+            ? "rider.global_activated"
+            : "rider.global_deactivated",
+          resourceType: "user",
+          resourceId: riderId,
+          details: {
+            previousStatus: rider.isActive,
+            newStatus: newStatus,
+            scope: "global",
+          },
+          severity: "info",
+        });
+      }
+
+      return {
+        isActive: newStatus,
+        riderId,
+        affectedOrganizations: organizations.length,
+      };
+    } catch (error) {
+      console.error("Error toggling activity:", error);
       throw error;
     }
   }

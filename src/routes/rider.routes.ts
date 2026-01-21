@@ -1,4 +1,3 @@
-// routes/rider.routes.ts
 import { Router } from "express";
 import { riderController } from "../controllers/rider.controller.js";
 import {
@@ -24,7 +23,7 @@ router.use(authenticateToken, requireOrgMember);
 router.get(
   "/",
   requireOrgOwner,
-  riderController.getRiders.bind(riderController)
+  riderController.getRiders.bind(riderController),
 );
 
 /**
@@ -35,7 +34,7 @@ router.get(
 router.get(
   "/:riderId",
   requireOrgOwner,
-  riderController.getRiderById.bind(riderController)
+  riderController.getRiderById.bind(riderController),
 );
 
 /**
@@ -46,7 +45,7 @@ router.get(
 router.get(
   "/:riderId/organizations",
   requireRiderAccess, // Owners and riders can access
-  riderController.getRiderOrganizations.bind(riderController)
+  riderController.getRiderOrganizations.bind(riderController),
 );
 
 /**
@@ -57,7 +56,7 @@ router.get(
 router.post(
   "/:riderId/suspend",
   requireOrgOwner,
-  riderController.suspendRider.bind(riderController)
+  riderController.suspendRider.bind(riderController),
 );
 
 /**
@@ -68,7 +67,7 @@ router.post(
 router.post(
   "/:riderId/unsuspend",
   requireOrgOwner,
-  riderController.unsuspendRider.bind(riderController)
+  riderController.unsuspendRider.bind(riderController),
 );
 
 /**
@@ -79,7 +78,7 @@ router.post(
 router.delete(
   "/:riderId",
   requireOrgOwner,
-  riderController.removeRider.bind(riderController)
+  riderController.removeRider.bind(riderController),
 );
 
 /**
@@ -90,7 +89,7 @@ router.delete(
 router.post(
   "/:riderId/deactivate",
   requireOrgOwner,
-  riderController.deactivateRider.bind(riderController)
+  riderController.deactivateRider.bind(riderController),
 );
 
 /**
@@ -101,7 +100,7 @@ router.post(
 router.post(
   "/:riderId/reactivate",
   requireOrgOwner,
-  riderController.reactivateRider.bind(riderController)
+  riderController.reactivateRider.bind(riderController),
 );
 
 /**
@@ -112,7 +111,19 @@ router.post(
 router.get(
   "/:riderId/suspension-status",
   requireOrgOwner,
-  riderController.checkSuspensionStatus.bind(riderController)
+  riderController.checkSuspensionStatus.bind(riderController),
+);
+
+/**
+ * @route   POST /api/riders/toggle-activity
+ * @desc    Toggle rider's global activity status (rider self-service)
+ * @access  Private (Rider only)
+ */
+router.post(
+  "/toggle-activity",
+  authenticateToken,
+  authorizeRole(["rider"]),
+  riderController.toggleActivity.bind(riderController),
 );
 
 export const riderRoutes = router;

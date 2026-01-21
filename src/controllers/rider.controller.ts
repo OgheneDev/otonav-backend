@@ -1,4 +1,3 @@
-// controllers/rider.controller.ts
 import { Request, Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware.js";
 import {
@@ -24,7 +23,7 @@ export class RiderController {
       const riders = await riderService.getRidersByOrganization(
         user.orgId,
         includeSuspended === "true",
-        includePending !== "false" // Default to true if not specified
+        includePending !== "false", // Default to true if not specified
       );
 
       // Filter out inactive riders if not specifically requested
@@ -124,7 +123,7 @@ export class RiderController {
         riderIdString,
         user.orgId,
         user.userId,
-        { reason, notes, suspensionDurationDays }
+        { reason, notes, suspensionDurationDays },
       );
 
       return res.status(200).json({
@@ -183,7 +182,7 @@ export class RiderController {
       const unsuspendedRider = await riderService.unsuspendRider(
         riderIdString,
         user.orgId,
-        user.userId
+        user.userId,
       );
 
       return res.status(200).json({
@@ -245,7 +244,7 @@ export class RiderController {
         riderIdString,
         user.orgId,
         user.userId,
-        { reason, notes }
+        { reason, notes },
       );
 
       return res.status(200).json({
@@ -300,7 +299,7 @@ export class RiderController {
         riderIdString,
         user.orgId,
         user.userId,
-        reason
+        reason,
       );
 
       return res.status(200).json({
@@ -352,7 +351,7 @@ export class RiderController {
       const reactivatedRider = await riderService.reactivateRider(
         riderIdString,
         user.orgId,
-        user.userId
+        user.userId,
       );
 
       return res.status(200).json({
@@ -403,7 +402,7 @@ export class RiderController {
 
       const isSuspended = await riderService.isRiderSuspended(
         riderIdString,
-        user.orgId
+        user.orgId,
       );
 
       return res.status(200).json({
@@ -439,9 +438,8 @@ export class RiderController {
       // FIX: Ensure riderId is a string
       const riderIdString = Array.isArray(riderId) ? riderId[0] : riderId;
 
-      const organizations = await riderService.getRiderOrganizations(
-        riderIdString
-      );
+      const organizations =
+        await riderService.getRiderOrganizations(riderIdString);
 
       return res.status(200).json({
         success: true,
@@ -453,6 +451,51 @@ export class RiderController {
       return res.status(500).json({
         success: false,
         message: error.message || "Failed to fetch rider organizations",
+      });
+    }
+  }
+
+  /**
+   * Toggle rider's global activity status
+   */
+  async toggleActivity(req: AuthRequest, res: Response) {
+    try {
+      const user = req.user;
+      if (!user || !user.userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized",
+        });
+      }
+
+      // Verify user is a rider
+      if (user.role !== "rider") {
+        return res.status(403).json({
+          success: false,
+          message: "Only riders can toggle activity status",
+        });
+      }
+
+      const result = await riderService.toggleActivity(user.userId);
+
+      return res.status(200).json({
+        success: true,
+        message: `You are now ${result.isActive ? "active" : "inactive"} across all organizations`,
+        data: result,
+      });
+    } catch (error: any) {
+      console.error("Error in toggleActivity:", error);
+
+      if (error.message.includes("not found")) {
+        return res.status(404).json({
+          success: false,
+          message: error.message,
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to toggle activity",
       });
     }
   }
