@@ -19,20 +19,19 @@ export interface AssignLocationDTO {
   locationPrecise?: string;
 }
 
-// Order status transition map
 const ORDER_STATUS_TRANSITIONS: Record<string, string[]> = {
   pending: ["rider_accepted", "customer_location_set", "cancelled"],
   rider_accepted: ["confirmed", "cancelled"],
   customer_location_set: ["confirmed", "cancelled"],
-  confirmed: ["delivered", "cancelled"],
+  confirmed: ["package_picked_up", "cancelled"],
+  package_picked_up: ["in_transit", "cancelled"],
+  in_transit: ["arrived_at_location", "cancelled"],
+  arrived_at_location: ["delivered", "cancelled"],
   delivered: [],
   cancelled: [],
 };
 
 export class OrderService {
-  /**
-   * Generate unique order number
-   */
   private generateOrderNumber(): string {
     const timestamp = Date.now().toString().slice(-6);
     const random = Math.floor(Math.random() * 1000)
@@ -41,25 +40,18 @@ export class OrderService {
     return `ORD${timestamp}${random}`;
   }
 
-  /**
-   * Validate if status transition is allowed
-   */
   private canTransitionTo(currentStatus: string, newStatus: string): boolean {
     return (
       ORDER_STATUS_TRANSITIONS[currentStatus]?.includes(newStatus) ?? false
     );
   }
 
-  /**
-   * Validate rider can perform order actions
-   */
   private async validateRiderForOrder(
     tx: any,
     riderId: string,
     orgId: string,
     action: string,
   ): Promise<void> {
-    // Check global rider activity
     const rider = await tx.query.users.findFirst({
       where: eq(users.id, riderId),
       columns: {
@@ -83,7 +75,6 @@ export class OrderService {
       );
     }
 
-    // Check organization-specific status
     const riderMembership = await tx.query.userOrganizations.findFirst({
       where: and(
         eq(userOrganizations.userId, riderId),
@@ -113,12 +104,8 @@ export class OrderService {
     }
   }
 
-  /**
-   * Create a new order
-   */
   async createOrder(orgId: string, ownerUserId: string, dto: CreateOrderDTO) {
     return await db.transaction(async (tx) => {
-      // Verify owner has permission
       const ownerMembership = await tx.query.userOrganizations.findFirst({
         where: and(
           eq(userOrganizations.userId, ownerUserId),
@@ -132,7 +119,6 @@ export class OrderService {
         throw new Error("Only organization owners can create orders");
       }
 
-      // Verify customer exists and is verified
       const customer = await tx.query.users.findFirst({
         where: and(
           eq(users.id, dto.customerId),
@@ -145,7 +131,6 @@ export class OrderService {
         throw new Error("Customer not found or not verified");
       }
 
-      // Verify rider membership in organization
       const riderMembership = await tx.query.userOrganizations.findFirst({
         where: and(
           eq(userOrganizations.userId, dto.riderId),
@@ -163,7 +148,6 @@ export class OrderService {
         throw new Error("Cannot assign orders to suspended riders");
       }
 
-      // Verify rider exists and is globally active
       const rider = await tx.query.users.findFirst({
         where: eq(users.id, dto.riderId),
         columns: {
@@ -189,7 +173,6 @@ export class OrderService {
         );
       }
 
-      // Create the order
       const [order] = await tx
         .insert(orders)
         .values({
@@ -203,16 +186,12 @@ export class OrderService {
         })
         .returning();
 
-      // Send notifications
       await this.sendAssignmentNotifications(order, customer, rider);
 
       return order;
     });
   }
 
-  /**
-   * Get all orders with optimized queries
-   */
   async getOrders(userId: string, userRole: string, orgId?: string) {
     let conditions: any[] = [];
 
@@ -227,10 +206,8 @@ export class OrderService {
       conditions.push(eq(orders.orgId, orgId));
     }
 
-    // Optimized query with joins
     const ordersList = await db
       .select({
-        // Order fields
         id: orders.id,
         orderNumber: orders.orderNumber,
         orgId: orders.orgId,
@@ -244,18 +221,18 @@ export class OrderService {
         assignedAt: orders.assignedAt,
         riderAcceptedAt: orders.riderAcceptedAt,
         customerLocationSetAt: orders.customerLocationSetAt,
+        packagePickedUpAt: orders.packagePickedUpAt,
+        deliveryStartedAt: orders.deliveryStartedAt,
+        arrivedAtLocationAt: orders.arrivedAtLocationAt,
         deliveredAt: orders.deliveredAt,
         cancelledAt: orders.cancelledAt,
         cancelledBy: orders.cancelledBy,
         cancellationReason: orders.cancellationReason,
         createdAt: orders.createdAt,
         updatedAt: orders.updatedAt,
-
-        // Organization fields
         orgName: organizations.name,
+        orgAddress: organizations.address,
         orgOwnerUserId: organizations.ownerUserId,
-
-        // Customer fields (from join)
         customerEmail: users.email,
         customerName: users.name,
         customerPhone: users.phoneNumber,
@@ -267,7 +244,6 @@ export class OrderService {
       .where(and(...conditions))
       .orderBy(desc(orders.createdAt));
 
-    // Batch fetch riders and owners
     const riderIds = [
       ...new Set(
         ordersList
@@ -327,6 +303,9 @@ export class OrderService {
       assignedAt: order.assignedAt,
       riderAcceptedAt: order.riderAcceptedAt,
       customerLocationSetAt: order.customerLocationSetAt,
+      packagePickedUpAt: order.packagePickedUpAt,
+      deliveryStartedAt: order.deliveryStartedAt,
+      arrivedAtLocationAt: order.arrivedAtLocationAt,
       deliveredAt: order.deliveredAt,
       cancelledAt: order.cancelledAt,
       cancelledBy: order.cancelledBy,
@@ -336,6 +315,7 @@ export class OrderService {
       organization: {
         id: order.orgId,
         name: order.orgName,
+        address: order.orgAddress,
         owner: order.orgOwnerUserId
           ? ownerMap.get(order.orgOwnerUserId) || null
           : null,
@@ -351,9 +331,6 @@ export class OrderService {
     }));
   }
 
-  /**
-   * Get single order by ID with optimized query
-   */
   async getOrderById(
     orderId: string,
     userId: string,
@@ -383,13 +360,13 @@ export class OrderService {
       throw new Error("Order not found or you don't have access to it");
     }
 
-    // Fetch related data
     const [org, customer, rider] = await Promise.all([
       db.query.organizations.findFirst({
         where: eq(organizations.id, order.orgId),
         columns: {
           id: true,
           name: true,
+          address: true,
           ownerUserId: true,
         },
       }),
@@ -418,7 +395,6 @@ export class OrderService {
         : Promise.resolve(null),
     ]);
 
-    // Get owner details if needed
     let owner = null;
     if (org?.ownerUserId) {
       owner = await db.query.users.findFirst({
@@ -436,6 +412,7 @@ export class OrderService {
       organization: {
         id: org?.id,
         name: org?.name,
+        address: org?.address,
         owner: owner
           ? {
               id: owner.id,
@@ -449,9 +426,6 @@ export class OrderService {
     };
   }
 
-  /**
-   * Rider accepts an order
-   */
   async riderAcceptOrder(
     orderId: string,
     riderId: string,
@@ -472,7 +446,6 @@ export class OrderService {
         );
       }
 
-      // Validate rider can perform this action
       await this.validateRiderForOrder(
         tx,
         riderId,
@@ -480,7 +453,6 @@ export class OrderService {
         "accept orders",
       );
 
-      // Determine next status based on current state
       let nextStatus: "rider_accepted" | "confirmed";
       if (order.status === "pending") {
         nextStatus = "rider_accepted";
@@ -490,7 +462,6 @@ export class OrderService {
         throw new Error("Order cannot be accepted in current state");
       }
 
-      // Validate status transition
       if (!this.canTransitionTo(order.status, nextStatus)) {
         throw new Error(
           `Cannot transition from ${order.status} to ${nextStatus}`,
@@ -508,7 +479,6 @@ export class OrderService {
         .where(eq(orders.id, orderId))
         .returning();
 
-      // Update rider's current location
       await tx
         .update(users)
         .set({
@@ -520,9 +490,6 @@ export class OrderService {
     });
   }
 
-  /**
-   * Customer sets their delivery location
-   */
   async setCustomerLocation(
     orderId: string,
     customerId: string,
@@ -543,7 +510,6 @@ export class OrderService {
         );
       }
 
-      // Determine next status
       let nextStatus: "customer_location_set" | "confirmed";
       if (order.status === "pending") {
         nextStatus = "customer_location_set";
@@ -553,7 +519,6 @@ export class OrderService {
         throw new Error("Location cannot be set in current state");
       }
 
-      // Validate status transition
       if (!this.canTransitionTo(order.status, nextStatus)) {
         throw new Error(
           `Cannot transition from ${order.status} to ${nextStatus}`,
@@ -576,9 +541,6 @@ export class OrderService {
     });
   }
 
-  /**
-   * Owner sets customer location from saved locations
-   */
   async ownerSetCustomerLocation(
     orderId: string,
     ownerId: string,
@@ -641,7 +603,6 @@ export class OrderService {
         );
       }
 
-      // Determine next status
       let nextStatus: "customer_location_set" | "confirmed";
       if (order.status === "pending") {
         nextStatus = "customer_location_set";
@@ -651,7 +612,6 @@ export class OrderService {
         throw new Error("Location cannot be set in current state");
       }
 
-      // Validate status transition
       if (!this.canTransitionTo(order.status, nextStatus)) {
         throw new Error(
           `Cannot transition from ${order.status} to ${nextStatus}`,
@@ -674,24 +634,47 @@ export class OrderService {
     });
   }
 
-  /**
-   * Rider confirms delivery
-   */
+  async markPackagePickedUp(orderId: string, riderId: string) {
+    return await this.updateOrderStatus(
+      orderId,
+      riderId,
+      "package_picked_up",
+      "packagePickedUpAt",
+    );
+  }
+
+  async startDelivery(orderId: string, riderId: string) {
+    return await this.updateOrderStatus(
+      orderId,
+      riderId,
+      "in_transit",
+      "deliveryStartedAt",
+    );
+  }
+
+  async markArrivedAtLocation(orderId: string, riderId: string) {
+    return await this.updateOrderStatus(
+      orderId,
+      riderId,
+      "arrived_at_location",
+      "arrivedAtLocationAt",
+    );
+  }
+
   async confirmDelivery(orderId: string, riderId: string) {
     return await db.transaction(async (tx) => {
       const order = await tx.query.orders.findFirst({
         where: and(
           eq(orders.id, orderId),
           eq(orders.riderId, riderId),
-          eq(orders.status, "confirmed"),
+          eq(orders.status, "arrived_at_location"),
         ),
       });
 
       if (!order) {
-        throw new Error("Order not found or not confirmed");
+        throw new Error("Order not found or not arrived at location");
       }
 
-      // Validate rider can perform this action
       await this.validateRiderForOrder(
         tx,
         riderId,
@@ -699,7 +682,6 @@ export class OrderService {
         "confirm deliveries",
       );
 
-      // Validate status transition
       if (!this.canTransitionTo(order.status, "delivered")) {
         throw new Error(`Cannot transition from ${order.status} to delivered`);
       }
@@ -718,9 +700,88 @@ export class OrderService {
     });
   }
 
-  /**
-   * Get customer location labels for an order
-   */
+  async updateOrderStatus(
+    orderId: string,
+    riderId: string,
+    newStatus: string,
+    timestampField?: string,
+  ) {
+    return await db.transaction(async (tx) => {
+      const order = await tx.query.orders.findFirst({
+        where: and(eq(orders.id, orderId), eq(orders.riderId, riderId)),
+      });
+
+      if (!order) {
+        throw new Error("Order not found");
+      }
+
+      await this.validateRiderForOrder(
+        tx,
+        riderId,
+        order.orgId,
+        "update order status",
+      );
+
+      if (!this.canTransitionTo(order.status, newStatus)) {
+        throw new Error(
+          `Cannot transition from ${order.status} to ${newStatus}`,
+        );
+      }
+
+      const updateData: any = {
+        status: newStatus,
+        updatedAt: new Date(),
+      };
+
+      if (timestampField) {
+        updateData[timestampField] = new Date();
+      }
+
+      const [updatedOrder] = await tx
+        .update(orders)
+        .set(updateData)
+        .where(eq(orders.id, orderId))
+        .returning();
+
+      return updatedOrder;
+    });
+  }
+
+  async updateRiderLocation(
+    orderId: string,
+    riderId: string,
+    location: string,
+  ) {
+    await db.transaction(async (tx) => {
+      const order = await tx.query.orders.findFirst({
+        where: and(
+          eq(orders.id, orderId),
+          eq(orders.riderId, riderId),
+          sql`${orders.status} IN ('confirmed', 'package_picked_up', 'in_transit', 'arrived_at_location')`,
+        ),
+      });
+
+      if (!order) {
+        throw new Error("Order not in a trackable state");
+      }
+
+      await tx
+        .update(orders)
+        .set({
+          riderCurrentLocation: location,
+          updatedAt: new Date(),
+        })
+        .where(eq(orders.id, orderId));
+
+      await tx
+        .update(users)
+        .set({
+          currentLocation: location,
+        })
+        .where(eq(users.id, riderId));
+    });
+  }
+
   async getCustomerLocationLabels(
     orderId: string,
     orgId: string,
@@ -774,9 +835,6 @@ export class OrderService {
     );
   }
 
-  /**
-   * Cancel an order
-   */
   async cancelOrder(
     orderId: string,
     userId: string,
@@ -812,7 +870,6 @@ export class OrderService {
       throw new Error("Order is already cancelled");
     }
 
-    // Validate status transition
     if (!this.canTransitionTo(order.status, "cancelled")) {
       throw new Error(`Orders in ${order.status} status cannot be cancelled`);
     }
@@ -832,9 +889,6 @@ export class OrderService {
     return updatedOrder;
   }
 
-  /**
-   * Send assignment notifications to customer and rider
-   */
   private async sendAssignmentNotifications(
     order: any,
     customer: any,
@@ -886,7 +940,6 @@ export class OrderService {
       await Promise.all(notifications);
     } catch (error) {
       console.error("Failed to send assignment notifications:", error);
-      // Don't throw - we don't want email failures to block order creation
     }
   }
 }

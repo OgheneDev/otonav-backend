@@ -49,13 +49,27 @@ export const registerBusinessController = async (
   res: Response,
 ) => {
   try {
-    const { email, password, name, phoneNumber, businessName } = req.body;
+    const {
+      email,
+      password,
+      name,
+      phoneNumber,
+      businessName,
+      businessAddress,
+    } = req.body;
 
-    if (!email || !password || !name || !businessName || !phoneNumber) {
+    if (
+      !email ||
+      !password ||
+      !name ||
+      !businessName ||
+      !phoneNumber ||
+      !businessAddress
+    ) {
       return res.status(400).json({
         success: false,
         message:
-          "All fields are required: email, password, name, businessName, phoneNumber",
+          "All fields are required: email, password, name, businessName, phoneNumber, businessAddress",
       });
     }
 
@@ -65,6 +79,7 @@ export const registerBusinessController = async (
       name,
       businessName,
       phoneNumber,
+      businessAddress,
     );
 
     return successResponse(

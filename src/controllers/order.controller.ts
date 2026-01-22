@@ -1,4 +1,4 @@
-import { Request, Response } from "express";
+import { Response } from "express";
 import {
   orderService,
   CreateOrderDTO,
@@ -251,7 +251,6 @@ export class OrderController {
       const { user } = req;
       const { orderId } = req.params;
 
-      // Middleware already verified user is rider
       const orderIdString = Array.isArray(orderId) ? orderId[0] : orderId;
 
       const order = await orderService.confirmDelivery(
@@ -266,6 +265,118 @@ export class OrderController {
       });
     } catch (error: any) {
       console.error("Error confirming delivery:", error);
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  }
+
+  async markPackagePickedUp(req: AuthRequest, res: Response) {
+    try {
+      const { user } = req;
+      const { orderId } = req.params;
+
+      const orderIdString = Array.isArray(orderId) ? orderId[0] : orderId;
+
+      const order = await orderService.markPackagePickedUp(
+        orderIdString,
+        user!.userId,
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Package picked up successfully",
+        data: order,
+      });
+    } catch (error: any) {
+      console.error("Error marking package picked up:", error);
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  }
+
+  async startDelivery(req: AuthRequest, res: Response) {
+    try {
+      const { user } = req;
+      const { orderId } = req.params;
+
+      const orderIdString = Array.isArray(orderId) ? orderId[0] : orderId;
+
+      const order = await orderService.startDelivery(
+        orderIdString,
+        user!.userId,
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Delivery started successfully",
+        data: order,
+      });
+    } catch (error: any) {
+      console.error("Error starting delivery:", error);
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  }
+
+  async markArrivedAtLocation(req: AuthRequest, res: Response) {
+    try {
+      const { user } = req;
+      const { orderId } = req.params;
+
+      const orderIdString = Array.isArray(orderId) ? orderId[0] : orderId;
+
+      const order = await orderService.markArrivedAtLocation(
+        orderIdString,
+        user!.userId,
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Arrived at location successfully",
+        data: order,
+      });
+    } catch (error: any) {
+      console.error("Error marking arrived at location:", error);
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  }
+
+  async updateRiderLocation(req: AuthRequest, res: Response) {
+    try {
+      const { user } = req;
+      const { orderId } = req.params;
+      const { currentLocation } = req.body;
+
+      if (!currentLocation) {
+        return res.status(400).json({
+          success: false,
+          message: "Current location is required",
+        });
+      }
+
+      const orderIdString = Array.isArray(orderId) ? orderId[0] : orderId;
+
+      await orderService.updateRiderLocation(
+        orderIdString,
+        user!.userId,
+        currentLocation,
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Location updated successfully",
+      });
+    } catch (error: any) {
+      console.error("Error updating rider location:", error);
       return res.status(400).json({
         success: false,
         message: error.message,

@@ -566,6 +566,7 @@ export const registerBusiness = async (
   name: string,
   businessName: string,
   phoneNumber: string,
+  businessAddress: string,
 ) => {
   const existing = await db
     .select({ id: users.id })
@@ -584,6 +585,7 @@ export const registerBusiness = async (
         .insert(organizations)
         .values({
           name: businessName,
+          address: businessAddress,
         })
         .returning();
 

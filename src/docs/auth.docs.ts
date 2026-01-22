@@ -21,6 +21,7 @@
  *         - name
  *         - businessName
  *         - phoneNumber
+ *         - businessAddress
  *       properties:
  *         email:
  *           type: string
@@ -40,6 +41,10 @@
  *         phoneNumber:
  *           type: string
  *           example: "+1234567890"
+ *         businessAddress:
+ *           type: string
+ *           description: "Physical address of the business"
+ *           example: "123 Business Street, City, Country"
  *
  *     RegisterCustomer:
  *       type: object

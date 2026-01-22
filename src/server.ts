@@ -6,13 +6,14 @@ import { authRoutes } from "./routes/auth.routes.js";
 import { riderRoutes } from "./routes/rider.routes.js";
 import { customerRoutes } from "./routes/customer.routes.js";
 import { orderRoutes } from "./routes/order.routes.js";
-//import { devRouter } from "./routes/dev.routes.js";
 import { errorHandler } from "./middleware/error.middleware.js";
 import dotenv from "dotenv";
 import swaggerUi from "swagger-ui-express";
 import { swaggerSpec } from "./docs/swagger.js";
+import http from "http";
+import { LocationWebSocketServer } from "./websocket/location.server.js";
+//import { devRouter } from "./routes/dev.routes.js";
 
-// Extend Express Request type
 declare global {
   namespace Express {
     interface Request {
@@ -22,22 +23,19 @@ declare global {
   }
 }
 
-// Load environment variables
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const server = http.createServer(app);
 
-// CORS - Allow specific origins for credentials
 const corsOptions = {
   origin: function (
     origin: string | undefined,
-    callback: (err: Error | null, allow?: boolean) => void
+    callback: (err: Error | null, allow?: boolean) => void,
   ) {
-    // Allow requests with no origin (like mobile apps, Postman, curl)
     if (!origin) return callback(null, true);
 
-    // List of allowed origins
     const allowedOrigins = [
       "http://localhost:3000",
       "http://localhost:3001",
@@ -47,15 +45,14 @@ const corsOptions = {
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
-      callback(null, true); // Allow all origins for now (development)
+      callback(null, true);
     }
   },
-  credentials: true, // Allow cookies
+  credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
   allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
 };
 
-// Request timing and timeout logging middleware
 app.use((req, res, next) => {
   const startTime = Date.now();
   const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -65,20 +62,18 @@ app.use((req, res, next) => {
 
   console.log(`[${requestId}] 🔵 START: ${req.method} ${req.path}`);
 
-  // Log when response finishes
   res.on("finish", () => {
     const duration = Date.now() - startTime;
     console.log(
-      `[${requestId}] ✅ FINISH: ${req.method} ${req.path} - ${duration}ms - Status: ${res.statusCode}`
+      `[${requestId}] ✅ FINISH: ${req.method} ${req.path} - ${duration}ms - Status: ${res.statusCode}`,
     );
   });
 
-  // Log when response closes (client disconnected)
   res.on("close", () => {
     const duration = Date.now() - startTime;
     if (!res.writableEnded) {
       console.log(
-        `[${requestId}] ⚠️  CLOSED: ${req.method} ${req.path} - ${duration}ms - Client disconnected before response completed`
+        `[${requestId}] ⚠️  CLOSED: ${req.method} ${req.path} - ${duration}ms - Client disconnected before response completed`,
       );
     }
   });
@@ -86,24 +81,20 @@ app.use((req, res, next) => {
   next();
 });
 
-// Middleware
 app.use(helmet());
 app.use(cors(corsOptions));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
 
-// Docs
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
-// Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/riders", riderRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/orders", orderRoutes);
 //app.use("/dev", devRouter);
 
-// Health check
 app.get("/health", (req, res) => {
   res.status(200).json({
     success: true,
@@ -112,7 +103,6 @@ app.get("/health", (req, res) => {
   });
 });
 
-// 404 handler
 app.use((req, res, next) => {
   res.status(404).json({
     success: false,
@@ -120,14 +110,15 @@ app.use((req, res, next) => {
   });
 });
 
-// Error handler
 app.use(errorHandler);
 
-// Start server
-const server = app.listen(PORT, () => {
+const locationWSS = new LocationWebSocketServer(server);
+
+server.listen(PORT, () => {
   console.log(`
 🚀 Server running on port ${PORT}
-📍 http://localhost:${PORT}
+📍 HTTP: http://localhost:${PORT}
+📍 WebSocket: ws://localhost:${PORT}
 🌍 Environment: ${process.env.NODE_ENV || "development"}
 📅 ${new Date().toISOString()}
 ⏱️  Server timeout: ${120000}ms (2 minutes)
@@ -136,34 +127,26 @@ const server = app.listen(PORT, () => {
   `);
 });
 
-// Set server timeout (in milliseconds)
-// 2 minutes = 120000ms
 server.timeout = 120000;
-
-// Optional: Set keep-alive timeout (should be higher than timeout)
 server.keepAliveTimeout = 125000;
-
-// Optional: Set headers timeout (should be higher than keepAliveTimeout)
 server.headersTimeout = 130000;
 
-// Log timeout events
 server.on("timeout", (socket) => {
   console.error(
-    `🔴 SERVER TIMEOUT: Socket timed out after ${server.timeout}ms`
+    `🔴 SERVER TIMEOUT: Socket timed out after ${server.timeout}ms`,
   );
   console.error(
-    `   Remote address: ${socket.remoteAddress}:${socket.remotePort}`
+    `   Remote address: ${socket.remoteAddress}:${socket.remotePort}`,
   );
   console.error(`   Local address: ${socket.localAddress}:${socket.localPort}`);
 });
 
-// Log when connections are established
 server.on("connection", (socket) => {
   const connectionId = `${Date.now()}-${Math.random()
     .toString(36)
     .substr(2, 9)}`;
   console.log(
-    `[${connectionId}] 🔌 New connection from ${socket.remoteAddress}:${socket.remotePort}`
+    `[${connectionId}] 🔌 New connection from ${socket.remoteAddress}:${socket.remotePort}`,
   );
 
   socket.on("timeout", () => {
@@ -178,12 +161,13 @@ server.on("connection", (socket) => {
     console.log(
       `[${connectionId}] 🔌 Connection closed ${
         hadError ? "with error" : "cleanly"
-      }`
+      }`,
     );
   });
 });
 
-// Log server errors
 server.on("error", (err) => {
   console.error("🔴 SERVER ERROR:", err);
 });
+
+export { locationWSS };
