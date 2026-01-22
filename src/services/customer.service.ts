@@ -31,6 +31,8 @@ export class CustomerService {
           isProfileComplete: users.isProfileComplete,
           createdAt: users.createdAt,
           lastLoginAt: users.lastLoginAt,
+          isActive: userOrganizations.isActive,
+          joinedAt: userOrganizations.joinedAt,
         })
         .from(userOrganizations)
         .innerJoin(users, eq(users.id, userOrganizations.userId))
