@@ -86,34 +86,24 @@ const generateRegistrationToken = (
   role: string,
   name?: string,
 ): string => {
-  if (role === "customer") {
-    return jwt.sign(
-      {
-        email,
-        name,
-        role,
-        type: "registration",
-      },
-      JWT_SECRET,
-      { expiresIn: "24h" },
-    );
+  const payload: any = {
+    email,
+    name,
+    role,
+    type: "registration",
+  };
+
+  // Include orgId for riders and customers (when invited by organization)
+  if (role === "rider" || (role === "customer" && orgId)) {
+    if (!orgId) {
+      throw new Error(
+        "orgId is required for rider/customer registration tokens when invited by organization",
+      );
+    }
+    payload.orgId = orgId;
   }
 
-  if (!orgId) {
-    throw new Error("orgId is required for rider registration tokens");
-  }
-
-  return jwt.sign(
-    {
-      email,
-      name,
-      orgId,
-      role,
-      type: "registration",
-    },
-    JWT_SECRET,
-    { expiresIn: "24h" },
-  );
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: "24h" });
 };
 
 const generateInvitationToken = (
@@ -455,6 +445,76 @@ const sendCustomerRegistrationLinkEmail = async (
           <p style="font-size: 12px; color: #999; text-align: center;">
             This link will expire in 24 hours.
             <br>If you didn't expect this invitation, please ignore this email.
+          </p>
+        </div>
+      </div>
+    `,
+  });
+};
+
+const sendCustomerInvitationEmail = async (
+  email: string,
+  invitationLink: string,
+  businessName: string,
+  customerName: string,
+) => {
+  await sendEmail({
+    to: email,
+    subject: `Join ${businessName} as a Customer`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
+        <div style="text-align: center; margin-bottom: 30px;">
+          <h1 style="color: #17a2b8; margin-bottom: 5px;">OtoNav</h1>
+          <p style="color: #666; font-size: 14px;">Delivery Management Platform</p>
+          <div style="height: 3px; width: 100px; background: #17a2b8; margin: 10px auto;"></div>
+        </div>
+        
+        <div style="background: #e0f7fa; padding: 15px; border-radius: 8px; margin-bottom: 25px;">
+          <p style="color: #006064; margin: 0; font-weight: bold; text-align: center;">
+            🤝 New Customer Invitation
+          </p>
+        </div>
+        
+        <h2 style="color: #333; margin-bottom: 20px; text-align: center;">
+          Join ${businessName} as a Customer
+        </h2>
+        
+        <p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+          Hello ${customerName},
+        </p>
+        
+        <p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+          <strong>${businessName}</strong> has invited you to be their customer on OtoNav.
+          You already have an OtoNav account, so you can accept this invitation to:
+        </p>
+        
+        <ul style="color: #666; line-height: 1.6; margin-bottom: 20px; padding-left: 20px;">
+          <li>Place orders with ${businessName}</li>
+          <li>Manage your delivery addresses</li>
+          <li>Track your orders in real-time</li>
+          <li>Save your favorite locations</li>
+        </ul>
+        
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${invitationLink}" 
+             style="background: #17a2b8; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+            Accept Invitation
+          </a>
+        </div>
+        
+        <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; margin: 25px 0;">
+          <p style="color: #0056b3; font-weight: bold; margin-bottom: 10px;">ℹ️ How it works:</p>
+          <ul style="margin: 0; padding-left: 20px; color: #666;">
+            <li>You'll be added to ${businessName}'s customer list</li>
+            <li>You can shop with multiple businesses</li>
+            <li>Your existing account will remain active</li>
+          </ul>
+        </div>
+        
+        <div style="border-top: 1px solid #e0e0e0; padding-top: 20px; margin-top: 30px;">
+          <p style="font-size: 12px; color: #999; text-align: center;">
+            This invitation will expire in 7 days.
+            <br>If you don't want to accept this invitation, simply ignore this email.
           </p>
         </div>
       </div>
@@ -1546,39 +1606,117 @@ export const createCustomerAccount = async (
     throw new Error("Organization not found");
   }
 
-  if (
-    existingUser &&
-    existingUser.emailVerified &&
-    existingUser.registrationStatus === "completed" &&
-    existingUser.role === "customer"
-  ) {
-    throw new Error("Customer already exists and is verified");
-  }
-
   return await db.transaction(async (tx) => {
     let customer;
-    const token = generateRegistrationToken(
-      customerEmail,
-      "",
-      "customer",
-      customerName,
-    );
-    const registrationLink = getRegistrationLink(token, "customer");
+    let token;
+    let emailType;
+    let registrationLink = "";
+    let invitationLink = "";
 
-    if (existingUser && !existingUser.emailVerified) {
-      [customer] = await tx
-        .update(users)
-        .set({
-          name: customerName || existingUser.name,
-          role: "customer",
-          registrationToken: token,
-          registrationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
-          registrationStatus: "pending",
-          isProfileComplete: false,
+    if (existingUser) {
+      // Check if user is already a member of this organization
+      const existingMembership = await tx
+        .select({
+          userId: userOrganizations.userId,
+          orgId: userOrganizations.orgId,
+          registrationStatus: userOrganizations.registrationStatus,
         })
-        .where(eq(users.id, existingUser.id))
-        .returning();
+        .from(userOrganizations)
+        .where(
+          and(
+            eq(userOrganizations.userId, existingUser.id),
+            eq(userOrganizations.orgId, orgId),
+          ),
+        )
+        .limit(1)
+        .then((rows) => rows[0]);
+
+      if (existingMembership) {
+        if (existingMembership.registrationStatus === "pending") {
+          throw new Error("Customer already has a pending invitation");
+        }
+        throw new Error("Customer already belongs to this organization");
+      }
+
+      // If user exists and is verified, send invitation
+      if (
+        existingUser.emailVerified &&
+        existingUser.registrationStatus === "completed"
+      ) {
+        token = generateInvitationToken(customerEmail, orgId, "customer");
+        invitationLink = getInvitationLink(token);
+        emailType = "invitation";
+
+        await sendCustomerInvitationEmail(
+          customerEmail,
+          invitationLink,
+          org.name,
+          customerName || existingUser.name || "",
+        );
+
+        // Store invitation token in user
+        await tx
+          .update(users)
+          .set({
+            invitationToken: token,
+            invitationTokenExpires: new Date(
+              Date.now() + 7 * 24 * 60 * 60 * 1000,
+            ),
+          })
+          .where(eq(users.id, existingUser.id));
+      } else {
+        // User exists but not verified, send registration link
+        token = generateRegistrationToken(
+          customerEmail,
+          orgId,
+          "customer",
+          customerName,
+        );
+        registrationLink = getRegistrationLink(token, "customer");
+        emailType = "registration";
+
+        await sendCustomerRegistrationLinkEmail(
+          customerEmail,
+          registrationLink,
+          org.name,
+        );
+
+        await tx
+          .update(users)
+          .set({
+            registrationToken: token,
+            registrationTokenExpires: new Date(
+              Date.now() + 24 * 60 * 60 * 1000,
+            ),
+          })
+          .where(eq(users.id, existingUser.id));
+      }
+
+      // Add user to organization with pending status
+      await tx.insert(userOrganizations).values({
+        userId: existingUser.id,
+        orgId: orgId,
+        role: "customer",
+        isActive: false,
+        isSuspended: false,
+        registrationStatus: "pending",
+        invitedAt: new Date(),
+        invitationSentAt: new Date(),
+        joinedAt: null,
+      });
+
+      customer = existingUser;
     } else {
+      // User doesn't exist, create new customer with registration link
+      token = generateRegistrationToken(
+        customerEmail,
+        orgId,
+        "customer",
+        customerName,
+      );
+      registrationLink = getRegistrationLink(token, "customer");
+      emailType = "registration";
+
       const tempPassword = `temp_${Math.random().toString(36).slice(2, 12)}`;
       const tempPasswordHash = await hashPassword(tempPassword);
 
@@ -1597,24 +1735,41 @@ export const createCustomerAccount = async (
           tokenVersion: 1,
         })
         .returning();
-    }
 
-    await sendCustomerRegistrationLinkEmail(
-      customerEmail,
-      registrationLink,
-      org.name,
-    );
+      // Add user to organization with pending status
+      await tx.insert(userOrganizations).values({
+        userId: customer.id,
+        orgId: orgId,
+        role: "customer",
+        isActive: false,
+        isSuspended: false,
+        registrationStatus: "pending",
+        invitedAt: new Date(),
+        invitationSentAt: new Date(),
+        joinedAt: null,
+      });
+
+      await sendCustomerRegistrationLinkEmail(
+        customerEmail,
+        registrationLink,
+        org.name,
+      );
+    }
 
     await tx.insert(auditLogs).values({
       orgId: orgId,
       userId: ownerId,
-      action: "customer.account_created",
+      action:
+        emailType === "invitation"
+          ? "customer.invited"
+          : "customer.account_created",
       severity: "info",
       details: {
         customerEmail,
-        customerName: customerName || "Not provided",
-        createdBy: ownerMembership.userId,
+        customerName: customerName || customer.name || "Not provided",
+        emailType,
         status: "pending",
+        createdBy: ownerId,
       },
       timestamp: new Date(),
     });
@@ -1624,9 +1779,11 @@ export const createCustomerAccount = async (
       email: customer.email,
       name: customer.name,
       emailSent: true,
+      emailType,
       status: "pending",
       token: token,
-      registrationLink: registrationLink,
+      registrationLink: registrationLink || null,
+      invitationLink: invitationLink || null,
     };
   });
 };
@@ -1723,24 +1880,6 @@ export const completeCustomerRegistrationViaToken = async (
   phoneNumber?: string,
   name?: string,
 ) => {
-  const user = await db
-    .select(selectUserColumns)
-    .from(users)
-    .where(eq(users.registrationToken, token))
-    .limit(1)
-    .then((rows) => rows[0]);
-
-  if (!user) {
-    throw new Error("Invalid registration token");
-  }
-
-  if (
-    !user.registrationTokenExpires ||
-    user.registrationTokenExpires < new Date()
-  ) {
-    throw new Error("Registration token has expired");
-  }
-
   let payload;
   try {
     payload = jwt.verify(token, JWT_SECRET) as any;
@@ -1753,8 +1892,17 @@ export const completeCustomerRegistrationViaToken = async (
     throw new Error("Invalid token type");
   }
 
-  if (payload.email !== user.email) {
-    throw new Error("Token email mismatch");
+  const { email, orgId } = payload;
+
+  const user = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1)
+    .then((rows) => rows[0]);
+
+  if (!user) {
+    throw new Error(`No user found with email: ${email}`);
   }
 
   const passwordHash = await hashPassword(password);
@@ -1779,18 +1927,155 @@ export const completeCustomerRegistrationViaToken = async (
     updateData.name = payload.name;
   }
 
+  return await db.transaction(async (tx) => {
+    const [updatedUser] = await tx
+      .update(users)
+      .set(updateData)
+      .where(eq(users.id, user.id))
+      .returning();
+
+    // If orgId is provided in token, activate the user in organization
+    if (orgId) {
+      await tx
+        .update(userOrganizations)
+        .set({
+          isActive: true,
+          registrationStatus: "completed",
+          joinedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(userOrganizations.userId, updatedUser.id),
+            eq(userOrganizations.orgId, orgId),
+            eq(userOrganizations.role, "customer"),
+          ),
+        );
+    }
+
+    await sendVerificationOTPEmail(user.email, otp, updatedUser.name || "");
+
+    const accessToken = generateAccessToken({
+      userId: updatedUser.id,
+      email: updatedUser.email,
+      role: updatedUser.role,
+    });
+
+    return {
+      id: updatedUser.id,
+      email: updatedUser.email,
+      name: updatedUser.name,
+      role: updatedUser.role,
+      emailVerified: updatedUser.emailVerified,
+      registrationStatus: updatedUser.registrationStatus,
+      phoneNumber: updatedUser.phoneNumber,
+      otp: otp,
+      token: accessToken,
+    };
+  });
+};
+
+export const acceptCustomerInvitation = async (token: string) => {
+  let payload;
+  try {
+    payload = jwt.verify(token, JWT_SECRET) as any;
+  } catch (error) {
+    throw new Error("Invalid or expired token");
+  }
+
+  if (payload.type !== "invitation" || payload.role !== "customer") {
+    throw new Error("Invalid token type");
+  }
+
+  const { email, orgId } = payload;
+
+  const user = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(
+      and(
+        eq(users.email, email),
+        eq(users.invitationToken, token),
+        sql`${users.invitationTokenExpires} > NOW()`,
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
+
+  if (!user) {
+    throw new Error("Invalid invitation token or token expired");
+  }
+
+  const existingMembership = await db
+    .select({
+      userId: userOrganizations.userId,
+      orgId: userOrganizations.orgId,
+      registrationStatus: userOrganizations.registrationStatus,
+    })
+    .from(userOrganizations)
+    .where(
+      and(
+        eq(userOrganizations.userId, user.id),
+        eq(userOrganizations.orgId, orgId),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
+
+  if (existingMembership) {
+    if (existingMembership.registrationStatus === "pending") {
+      await db
+        .update(userOrganizations)
+        .set({
+          isActive: true,
+          registrationStatus: "completed",
+          joinedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(userOrganizations.userId, user.id),
+            eq(userOrganizations.orgId, orgId),
+          ),
+        );
+    } else {
+      throw new Error("Customer already belongs to this organization");
+    }
+  } else {
+    await db.insert(userOrganizations).values({
+      userId: user.id,
+      orgId: orgId,
+      role: "customer",
+      isActive: true,
+      isSuspended: false,
+      registrationStatus: "completed",
+      joinedAt: new Date(),
+    });
+  }
+
   const [updatedUser] = await db
     .update(users)
-    .set(updateData)
+    .set({
+      invitationToken: null,
+      invitationTokenExpires: null,
+    })
     .where(eq(users.id, user.id))
     .returning();
 
-  await sendVerificationOTPEmail(user.email, otp, updatedUser.name || "");
+  const org = await db
+    .select({ name: organizations.name })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1)
+    .then((rows) => rows[0]);
 
-  const accessToken = generateAccessToken({
+  await db.insert(auditLogs).values({
+    orgId: orgId,
     userId: updatedUser.id,
-    email: updatedUser.email,
-    role: updatedUser.role,
+    action: "customer.invitation_accepted",
+    severity: "info",
+    details: {
+      organizationName: org?.name,
+    },
+    timestamp: new Date(),
   });
 
   return {
@@ -1798,11 +2083,229 @@ export const completeCustomerRegistrationViaToken = async (
     email: updatedUser.email,
     name: updatedUser.name,
     role: updatedUser.role,
-    emailVerified: updatedUser.emailVerified,
-    registrationStatus: updatedUser.registrationStatus,
-    phoneNumber: updatedUser.phoneNumber,
-    otp: otp,
-    token: accessToken,
+  };
+};
+
+export const resendCustomerInvitation = async (
+  ownerId: string,
+  orgId: string,
+  customerId: string,
+) => {
+  const owner = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.id, ownerId))
+    .limit(1)
+    .then((rows) => rows[0]);
+
+  const ownerMembership = await db
+    .select({
+      userId: userOrganizations.userId,
+      orgId: userOrganizations.orgId,
+      role: userOrganizations.role,
+    })
+    .from(userOrganizations)
+    .where(
+      and(
+        eq(userOrganizations.userId, ownerId),
+        eq(userOrganizations.orgId, orgId),
+        eq(userOrganizations.role, "owner"),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
+
+  if (!owner || !ownerMembership) {
+    throw new Error("Unauthorized");
+  }
+
+  const customer = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.id, customerId))
+    .limit(1)
+    .then((rows) => rows[0]);
+
+  if (!customer) {
+    throw new Error("Customer not found");
+  }
+
+  const membership = await db
+    .select({
+      userId: userOrganizations.userId,
+      orgId: userOrganizations.orgId,
+      registrationStatus: userOrganizations.registrationStatus,
+    })
+    .from(userOrganizations)
+    .where(
+      and(
+        eq(userOrganizations.userId, customerId),
+        eq(userOrganizations.orgId, orgId),
+        eq(userOrganizations.registrationStatus, "pending"),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
+
+  if (!membership) {
+    throw new Error("No pending invitation found");
+  }
+
+  const org = await db
+    .select({ name: organizations.name })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1)
+    .then((rows) => rows[0]);
+
+  let token;
+  let emailType;
+
+  if (customer.emailVerified && customer.registrationStatus === "completed") {
+    token = generateInvitationToken(customer.email, orgId, "customer");
+    emailType = "invitation";
+    await sendCustomerInvitationEmail(
+      customer.email,
+      getInvitationLink(token),
+      org!.name,
+      customer.name || customer.email,
+    );
+
+    await db
+      .update(users)
+      .set({
+        invitationToken: token,
+        invitationTokenExpires: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      })
+      .where(eq(users.id, customerId));
+  } else {
+    token = generateRegistrationToken(customer.email, orgId, "customer");
+    emailType = "registration";
+    await sendCustomerRegistrationLinkEmail(
+      customer.email,
+      getRegistrationLink(token, "customer"),
+      org!.name,
+    );
+
+    await db
+      .update(users)
+      .set({
+        registrationToken: token,
+        registrationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      })
+      .where(eq(users.id, customerId));
+  }
+
+  await db
+    .update(userOrganizations)
+    .set({
+      invitationSentAt: new Date(),
+    })
+    .where(
+      and(
+        eq(userOrganizations.userId, customerId),
+        eq(userOrganizations.orgId, orgId),
+      ),
+    );
+
+  return {
+    success: true,
+    message: `Invitation resent to ${customer.email}`,
+    emailType,
+  };
+};
+
+export const cancelCustomerInvitation = async (
+  ownerId: string,
+  orgId: string,
+  customerId: string,
+) => {
+  const owner = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(eq(users.id, ownerId))
+    .limit(1)
+    .then((rows) => rows[0]);
+
+  const ownerMembership = await db
+    .select({
+      userId: userOrganizations.userId,
+      orgId: userOrganizations.orgId,
+      role: userOrganizations.role,
+    })
+    .from(userOrganizations)
+    .where(
+      and(
+        eq(userOrganizations.userId, ownerId),
+        eq(userOrganizations.orgId, orgId),
+        eq(userOrganizations.role, "owner"),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
+
+  if (!owner || !ownerMembership) {
+    throw new Error("Unauthorized");
+  }
+
+  const membership = await db
+    .select({
+      userId: userOrganizations.userId,
+      orgId: userOrganizations.orgId,
+      registrationStatus: userOrganizations.registrationStatus,
+    })
+    .from(userOrganizations)
+    .where(
+      and(
+        eq(userOrganizations.userId, customerId),
+        eq(userOrganizations.orgId, orgId),
+        eq(userOrganizations.registrationStatus, "pending"),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
+
+  if (!membership) {
+    throw new Error("No pending invitation found");
+  }
+
+  await db
+    .delete(userOrganizations)
+    .where(
+      and(
+        eq(userOrganizations.userId, customerId),
+        eq(userOrganizations.orgId, orgId),
+      ),
+    );
+
+  const customer = await db
+    .select(selectUserColumns)
+    .from(users)
+    .where(
+      and(
+        eq(users.id, customerId),
+        eq(users.registrationStatus, "pending"),
+        eq(users.emailVerified, false),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows[0]);
+
+  if (customer) {
+    const otherMemberships = await db
+      .select({ id: userOrganizations.id })
+      .from(userOrganizations)
+      .where(eq(userOrganizations.userId, customerId))
+      .then((rows) => rows);
+
+    if (otherMemberships.length === 0) {
+      await db.delete(users).where(eq(users.id, customerId));
+    }
+  }
+
+  return {
+    success: true,
+    message: "Customer invitation cancelled successfully",
   };
 };
 

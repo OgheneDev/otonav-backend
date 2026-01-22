@@ -4,7 +4,7 @@ import { customerService } from "../services/customer.service.js";
 
 export class CustomerController {
   /**
-   * Get all customers on the platform
+   * Get all customers within the current organization (owners only)
    */
   async getAllCustomers(req: AuthRequest, res: Response) {
     try {
@@ -16,15 +16,24 @@ export class CustomerController {
         });
       }
 
-      // Only owners/admins should be able to see all customers
+      // Only owners can view customers
       if (user.role !== "owner") {
         return res.status(403).json({
           success: false,
-          message: "Unauthorized: Only owners can view all customers",
+          message: "Unauthorized: Only owners can view customers",
         });
       }
 
-      const customers = await customerService.getAllCustomers();
+      // Organization context required
+      const orgId = user.orgId;
+      if (!orgId) {
+        return res.status(400).json({
+          success: false,
+          message: "Organization context required",
+        });
+      }
+
+      const customers = await customerService.getAllCustomers(String(orgId));
 
       return res.status(200).json({
         success: true,
@@ -41,7 +50,7 @@ export class CustomerController {
   }
 
   /**
-   * Get customer by ID
+   * Get customer by ID within the current organization (owners only)
    */
   async getCustomerById(req: AuthRequest, res: Response) {
     try {
@@ -53,6 +62,14 @@ export class CustomerController {
         });
       }
 
+      // Only owners can view customer details
+      if (user.role !== "owner") {
+        return res.status(403).json({
+          success: false,
+          message: "Unauthorized: Only owners can view customer details",
+        });
+      }
+
       const { customerId } = req.params;
       if (!customerId) {
         return res.status(400).json({
@@ -61,15 +78,25 @@ export class CustomerController {
         });
       }
 
+      // Organization context required
+      const orgId = user.orgId;
+      if (!orgId) {
+        return res.status(400).json({
+          success: false,
+          message: "Organization context required",
+        });
+      }
+
       // Cast to string to handle the TypeScript error
       const customer = await customerService.getCustomerById(
-        String(customerId)
+        String(customerId),
+        String(orgId),
       );
 
       if (!customer) {
         return res.status(404).json({
           success: false,
-          message: "Customer not found",
+          message: "Customer not found within your organization",
         });
       }
 
@@ -87,7 +114,7 @@ export class CustomerController {
   }
 
   /**
-   * Search customers
+   * Search customers within the current organization (owners only)
    */
   async searchCustomers(req: AuthRequest, res: Response) {
     try {
@@ -99,11 +126,19 @@ export class CustomerController {
         });
       }
 
-      // Only owners/admins should be able to search all customers
+      // Only owners can search customers
       if (user.role !== "owner") {
         return res.status(403).json({
           success: false,
           message: "Unauthorized: Only owners can search customers",
+        });
+      }
+
+      const orgId = user.orgId;
+      if (!orgId) {
+        return res.status(400).json({
+          success: false,
+          message: "Organization context required",
         });
       }
 
@@ -115,7 +150,10 @@ export class CustomerController {
         });
       }
 
-      const customers = await customerService.searchCustomers(query);
+      const customers = await customerService.searchCustomers(
+        String(orgId),
+        query,
+      );
 
       return res.status(200).json({
         success: true,
@@ -127,42 +165,6 @@ export class CustomerController {
       return res.status(500).json({
         success: false,
         message: error.message || "Failed to search customers",
-      });
-    }
-  }
-
-  /**
-   * Get customer statistics
-   */
-  async getCustomerStats(req: AuthRequest, res: Response) {
-    try {
-      const user = req.user;
-      if (!user) {
-        return res.status(401).json({
-          success: false,
-          message: "Authentication required",
-        });
-      }
-
-      // Only owners/admins should be able to see customer stats
-      if (user.role !== "owner") {
-        return res.status(403).json({
-          success: false,
-          message: "Unauthorized: Only owners can view customer stats",
-        });
-      }
-
-      const stats = await customerService.getCustomerStats();
-
-      return res.status(200).json({
-        success: true,
-        data: stats,
-      });
-    } catch (error: any) {
-      console.error("Error in getCustomerStats:", error);
-      return res.status(500).json({
-        success: false,
-        message: error.message || "Failed to get customer statistics",
       });
     }
   }

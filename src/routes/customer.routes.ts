@@ -22,7 +22,4 @@ router.get("/:customerId", customerController.getCustomerById);
 // Search customers
 router.get("/search", customerController.searchCustomers);
 
-// Get customer statistics
-router.get("/stats/overview", customerController.getCustomerStats);
-
 export const customerRoutes = router;

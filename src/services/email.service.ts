@@ -22,7 +22,7 @@ export const sendEmail = async (options: EmailOptions): Promise<void> => {
     console.log(`📧 Sending email to ${options.to}...`);
 
     const { data, error } = await resend.emails.send({
-      from: `Otonav <${EMAIL_FROM}>`, // Format: "Name <email@otonav.com.ng>"
+      from: `Otonav <${EMAIL_FROM}>`,
       to: options.to,
       subject: options.subject,
       html: options.html,

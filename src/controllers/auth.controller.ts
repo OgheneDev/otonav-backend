@@ -20,6 +20,9 @@ import {
   cancelRiderInvitation,
   resendRiderInvitation,
   resendCustomerRegistrationLink,
+  acceptCustomerInvitation,
+  cancelCustomerInvitation,
+  resendCustomerInvitation,
 } from "../services/auth.service.js";
 
 // Helper functions
@@ -653,15 +656,25 @@ export const createCustomerAccountController = async (
       customerName,
     );
 
+    let message = "Customer registration link sent successfully";
+    if (result.emailType === "invitation") {
+      message = "Customer invitation sent successfully to existing user";
+    }
+
     return successResponse(
       res,
       {
+        id: result.id,
         email: result.email,
         name: result.name,
         emailSent: result.emailSent,
+        emailType: result.emailType,
+        status: result.status,
         token: result.token,
+        registrationLink: result.registrationLink,
+        invitationLink: result.invitationLink,
       },
-      "Customer registration link sent successfully",
+      message,
     );
   } catch (error) {
     return handleError(res, error);
@@ -731,18 +744,121 @@ export const completeCustomerRegistrationViaTokenController = async (
       name,
     );
 
+    const responseData: any = {
+      id: customer.id,
+      email: customer.email,
+      name: customer.name,
+      role: customer.role,
+      emailVerified: customer.emailVerified,
+      registrationStatus: customer.registrationStatus,
+      phoneNumber: customer.phoneNumber,
+    };
+
+    // Include token in response if it exists
+    if (customer.token) {
+      responseData.accessToken = customer.token;
+      responseData.expiresIn = 7 * 24 * 60 * 60;
+    }
+
+    return successResponse(
+      res,
+      responseData,
+      "Registration completed. Please check your email for OTP to verify your account.",
+    );
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+export const resendCustomerInvitationController = async (
+  req: Request,
+  res: Response,
+) => {
+  try {
+    const userId = (req as any).user?.userId;
+    const orgId = (req as any).user?.orgId;
+    const { customerId } = req.body;
+
+    if (!userId || !orgId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    if (!customerId) {
+      return res.status(400).json({
+        success: false,
+        message: "Customer ID is required",
+      });
+    }
+
+    // This function would need to be added to auth.service.js
+    const result = await resendCustomerInvitation(userId, orgId, customerId);
+
+    return successResponse(res, result, result.message);
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+export const cancelCustomerInvitationController = async (
+  req: Request,
+  res: Response,
+) => {
+  try {
+    const userId = (req as any).user?.userId;
+    const orgId = (req as any).user?.orgId;
+    const { customerId } = req.body;
+
+    if (!userId || !orgId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    if (!customerId) {
+      return res.status(400).json({
+        success: false,
+        message: "Customer ID is required",
+      });
+    }
+
+    // This function would need to be added to auth.service.js
+    const result = await cancelCustomerInvitation(userId, orgId, customerId);
+
+    return successResponse(res, result, result.message);
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+export const acceptCustomerInvitationController = async (
+  req: Request,
+  res: Response,
+) => {
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: "Token is required",
+      });
+    }
+
+    const result = await acceptCustomerInvitation(token);
+
     return successResponse(
       res,
       {
-        id: customer.id,
-        email: customer.email,
-        name: customer.name,
-        role: customer.role,
-        emailVerified: customer.emailVerified,
-        registrationStatus: customer.registrationStatus,
-        phoneNumber: customer.phoneNumber,
+        id: result.id,
+        email: result.email,
+        name: result.name,
+        role: result.role,
       },
-      "Registration completed. Please check your email for OTP to verify your account.",
+      "Customer invitation accepted successfully. You are now a customer of this organization.",
     );
   } catch (error) {
     return handleError(res, error);
