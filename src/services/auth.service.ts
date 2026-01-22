@@ -131,8 +131,8 @@ const getRegistrationLink = (
   return `${FRONTEND_URL}/complete-registration?token=${token}&type=${type}`;
 };
 
-const getInvitationLink = (token: string): string => {
-  return `${FRONTEND_URL}/accept-invitation?token=${token}`;
+const getInvitationLink = (token: string, role: string): string => {
+  return `${FRONTEND_URL}/accept-invitation?token=${token}&type=${role}`;
 };
 
 // --- OTP Management ---
@@ -1007,7 +1007,7 @@ export const createRiderAccount = async (
       }
 
       token = generateInvitationToken(riderEmail, orgId, "rider");
-      invitationLink = getInvitationLink(token);
+      invitationLink = getInvitationLink(token, "rider");
       emailType = "invitation";
 
       await sendRiderInvitationEmail(
@@ -1414,7 +1414,7 @@ export const resendRiderInvitation = async (
     emailType = "invitation";
     await sendRiderInvitationEmail(
       rider.email,
-      getInvitationLink(token),
+      getInvitationLink(token, "rider"),
       org!.name,
       rider.name || rider.email,
     );
@@ -1644,7 +1644,7 @@ export const createCustomerAccount = async (
         existingUser.registrationStatus === "completed"
       ) {
         token = generateInvitationToken(customerEmail, orgId, "customer");
-        invitationLink = getInvitationLink(token);
+        invitationLink = getInvitationLink(token, "customer");
         emailType = "invitation";
 
         await sendCustomerInvitationEmail(
@@ -2166,7 +2166,7 @@ export const resendCustomerInvitation = async (
     emailType = "invitation";
     await sendCustomerInvitationEmail(
       customer.email,
-      getInvitationLink(token),
+      getInvitationLink(token, "customer"),
       org!.name,
       customer.name || customer.email,
     );
