@@ -1,11 +1,9 @@
-import sgMail from "@sendgrid/mail";
+import { Resend } from "resend";
 
-const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
-const EMAIL_FROM = process.env.EMAIL_FROM || "emmanueloghene72@gmail.com";
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const EMAIL_FROM = process.env.EMAIL_FROM || "no-reply@otonav.com.ng";
 
-if (SENDGRID_API_KEY) {
-  sgMail.setApiKey(SENDGRID_API_KEY);
-}
+const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 
 export interface EmailOptions {
   to: string;
@@ -15,46 +13,29 @@ export interface EmailOptions {
 }
 
 export const sendEmail = async (options: EmailOptions): Promise<void> => {
-  if (!SENDGRID_API_KEY) {
-    console.warn("⚠️ SendGrid not configured");
+  if (!resend) {
+    console.warn("⚠️ Resend not configured");
     return;
   }
 
   try {
     console.log(`📧 Sending email to ${options.to}...`);
 
-    await sgMail.send({
+    const { data, error } = await resend.emails.send({
+      from: `Otonav <${EMAIL_FROM}>`, // Format: "Name <email@otonav.com.ng>"
       to: options.to,
-      from: {
-        email: EMAIL_FROM,
-        name: "Your App Name", // Add a friendly name
-      },
       subject: options.subject,
       html: options.html,
-      text: options.text || options.html.replace(/<[^>]*>/g, ""),
-
-      // These improve deliverability:
-      trackingSettings: {
-        clickTracking: { enable: false },
-        openTracking: { enable: false },
-      },
-      mailSettings: {
-        bypassListManagement: { enable: false },
-        sandboxMode: { enable: false },
-      },
+      text: options.text,
     });
 
-    console.log(`✅ Email sent to ${options.to}`);
-  } catch (error: any) {
-    console.error("❌ Failed to send email:", error);
-
-    if (error.response) {
-      console.error("SendGrid Error:", {
-        status: error.response.statusCode,
-        body: error.response.body,
-      });
+    if (error) {
+      throw error;
     }
 
+    console.log(`✅ Email sent to ${options.to}`, data);
+  } catch (error: any) {
+    console.error("❌ Failed to send email:", error);
     throw new Error(`Failed to send email: ${error.message}`);
   }
 };
