@@ -69,7 +69,7 @@
  *                 type: string
  *               preciseLocation:
  *                 type: string
- *           nullable: true
+ *                 nullable: true
  *         currentLocation:
  *           type: string
  *           nullable: true
@@ -156,6 +156,10 @@
  *           $ref: '#/components/schemas/User'
  *         rider:
  *           $ref: '#/components/schemas/User'
+ *         websocketInfo:
+ *           $ref: '#/components/schemas/WebSocketConnectionInfo'
+ *         statusFlow:
+ *           $ref: '#/components/schemas/OrderStatusFlowDiagram'
  *
  *     LocationLabel:
  *       type: object
@@ -198,127 +202,144 @@
  *           type: string
  *           example: "Error message"
  *
- *     WebSocketConnection:
+ *     RiderLocationUpdate:
  *       type: object
- *       description: Real-time WebSocket connection for order tracking
+ *       description: Message sent by rider to update location via WebSocket
+ *       required:
+ *         - coords
+ *       properties:
+ *         coords:
+ *           type: string
+ *           description: "Latitude and longitude coordinates"
+ *           example: "40.7128,-74.0060"
+ *
+ *     LocationUpdateBroadcast:
+ *       type: object
+ *       description: Location update broadcast to all connected clients via WebSocket
+ *       required:
+ *         - type
+ *         - location
+ *         - timestamp
+ *       properties:
+ *         type:
+ *           type: string
+ *           enum: [location_update]
+ *           example: "location_update"
+ *         location:
+ *           type: string
+ *           description: "Latitude and longitude coordinates"
+ *           example: "40.7128,-74.0060"
+ *         timestamp:
+ *           type: string
+ *           format: date-time
+ *
+ *     StatusUpdateBroadcast:
+ *       type: object
+ *       description: Status update broadcast to all connected clients via WebSocket
+ *       required:
+ *         - type
+ *         - status
+ *         - timestamp
+ *       properties:
+ *         type:
+ *           type: string
+ *           enum: [status_update]
+ *           example: "status_update"
+ *         status:
+ *           type: string
+ *           enum: [pending, rider_accepted, customer_location_set, confirmed, package_picked_up, in_transit, arrived_at_location, delivered, cancelled]
+ *           example: "in_transit"
+ *         timestamp:
+ *           type: string
+ *           format: date-time
+ *
+ *     WebSocketConnectionInfo:
+ *       type: object
+ *       description: |
+ *         Real-time WebSocket connection information for order tracking.
+ *
+ *         **How to Connect:**
+ *         - Rider: `ws://server?orderId=xxx&userId=xxx&role=rider`
+ *         - Customer: `ws://server?orderId=xxx&userId=xxx&role=customer`
+ *         - Owner: `ws://server?orderId=xxx&userId=xxx&role=owner`
+ *
+ *         **Rider sends location updates:**
+ *         ```json
+ *         {"coords": "40.7128,-74.0060"}
+ *         ```
+ *
+ *         **All clients receive:**
+ *         ```json
+ *         {"type": "location_update", "location": "40.7128,-74.0060", "timestamp": "2024-01-22T10:30:00Z"}
+ *         {"type": "status_update", "status": "in_transit", "timestamp": "2024-01-22T10:30:00Z"}
+ *         ```
  *       properties:
  *         url:
  *           type: string
+ *           description: WebSocket server URL
  *           example: "ws://localhost:5000"
- *         parameters:
+ *         connectionParameters:
  *           type: object
+ *           required:
+ *             - orderId
+ *             - userId
+ *             - role
  *           properties:
  *             orderId:
  *               type: string
  *               format: uuid
- *               description: Order ID
+ *               description: Order ID to track
  *             userId:
  *               type: string
  *               format: uuid
- *               description: User ID
+ *               description: User ID (rider, customer, or owner)
  *             role:
  *               type: string
  *               enum: [rider, customer, owner]
- *               description: User role
- *         riderSendFormat:
+ *               description: User role for connection
+ *         messageFormats:
  *           type: object
  *           properties:
- *             coords:
- *               type: string
- *               example: "40.7128,-74.0060"
- *         receiveFormat:
- *           type: object
- *           properties:
- *             type:
- *               type: string
- *               enum: [location_update, status_update]
- *             location:
- *               type: string
- *               description: "Only for location_update type"
- *               example: "40.7128,-74.0060"
- *             status:
- *               type: string
- *               description: "Only for status_update type"
- *               example: "in_transit"
- *             timestamp:
- *               type: string
- *               format: date-time
+ *             riderSends:
+ *               $ref: '#/components/schemas/RiderLocationUpdate'
+ *             allReceive:
+ *               type: array
+ *               items:
+ *                 oneOf:
+ *                   - $ref: '#/components/schemas/LocationUpdateBroadcast'
+ *                   - $ref: '#/components/schemas/StatusUpdateBroadcast'
  *
- *     OrderStatusFlow:
+ *     OrderStatusFlowDiagram:
  *       type: object
  *       description: |
- *         Complete Order Status Flow with Real-time Tracking:
+ *         **Complete Order Status Flow:**
  *
- *         ┌─────────────┐
- *         │   pending   │ ◄── Order created
- *         └─────┬───────┘
- *               │
- *        ┌──────┴────────┐
- *        │               │
- *   Rider accepts  Customer sets
- *   (with location) location
- *        │               │
- *        ▼               ▼
- *   ┌──────────┐  ┌──────────────┐
- *   │rider_    │  │customer_     │
- *   │accepted  │  │location_set  │
- *   └─────┬────┘  └──────┬───────┘
- *         │              │
- *    Customer sets  Rider accepts
- *    location       (with location)
- *         │              │
- *         └──────┬───────┘
- *                ▼
- *         ┌─────────────┐
- *         │  confirmed  │ ◄── Both conditions met
- *         └─────┬───────┘
- *               │
- *         ┌─────┴─────────┐
- *         ▼               ▼
- *   Package picked    Real-time
- *   up from org      tracking
- *   address          available
- *         │               │
- *         ▼               │
- *   ┌─────────────┐       │
- *   │package_     │       │
- *   │picked_up    │       │
- *   └─────┬───────┘       │
- *         │               │
- *         ▼               │
- *   ┌─────────────┐       │
- *   │ start       │───────┘
- *   │ delivery    │ ◄── Rider starts trip
- *   └─────┬───────┘
- *         │
- *         ▼
- *   ┌─────────────┐
- *   │  in_transit │ ◄── Real-time tracking active
- *   │             │     • Rider sends location every second via WebSocket
- *   │             │     • Customer/owner receive real-time updates
- *   │             │     • Location saved to database
- *   └─────┬───────┘
- *         │
- *         ▼
- *   ┌─────────────┐
- *   │ arrived_at  │ ◄── Rider arrives at customer location
- *   │ location    │     • Tracking stops
- *   └─────┬───────┘
- *         │
- *         ▼
- *   ┌─────────────┐
- *   │  delivered  │ ◄── Order completed
- *   └─────────────┘
+ *         1. **pending** → Order created
+ *         2. **rider_accepted** OR **customer_location_set** → Can happen in any order
+ *         3. **confirmed** → Both rider accepted AND customer location set
+ *         4. **package_picked_up** → Rider picks up from org address
+ *         5. **in_transit** → Delivery started (WebSocket tracking active)
+ *         6. **arrived_at_location** → Rider at customer location
+ *         7. **delivered** → Final state
  *
- *   WebSocket Tracking:
- *   • Rider connects: ws://server?orderId=xxx&userId=xxx&role=rider
- *   • Customer connects: ws://server?orderId=xxx&userId=xxx&role=customer
- *   • Owner connects: ws://server?orderId=xxx&userId=xxx&role=owner
- *   • Rider sends: {"coords": "lat,lng"}
- *   • All receive: {"type": "location_update", "location": "lat,lng", "timestamp": "..."}
- *   • Status updates broadcast to all connected clients
+ *         **Cancellation:** Available from any state except "delivered"
  *
- *   Cancellation: Available from any state except "delivered"
+ *         **WebSocket Tracking:** Active during confirmed → package_picked_up → in_transit → arrived_at_location
+ *       properties:
+ *         currentStatus:
+ *           type: string
+ *           enum: [pending, rider_accepted, customer_location_set, confirmed, package_picked_up, in_transit, arrived_at_location, delivered, cancelled]
+ *           description: Current order status
+ *         possibleTransitions:
+ *           type: array
+ *           items:
+ *             type: string
+ *           description: Next possible statuses from current state
+ *           example: ["package_picked_up", "cancelled"]
+ *         trackingAvailable:
+ *           type: boolean
+ *           description: Whether real-time WebSocket tracking is available for current status
+ *           example: true
  *
  *   responses:
  *     UnauthorizedError:
@@ -408,6 +429,8 @@
  *       - **Customers:** See all their own orders
  *       - **Riders:** See their orders in current organization
  *       - **Owners:** See all orders in their organization
+ *
+ *       **Note:** Each order includes WebSocket connection info and status flow for real-time tracking.
  *     security:
  *       - bearerAuth: []
  *     responses:
@@ -433,6 +456,11 @@
  *     summary: Get single order by ID
  *     description: |
  *       Get details of a specific order with role-based access control.
+ *
+ *       **Response includes:**
+ *       - Full order details
+ *       - WebSocket connection information for real-time tracking
+ *       - Status flow diagram showing possible next steps
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -699,18 +727,26 @@
  *     description: |
  *       Rider starts delivery trip to customer location.
  *       Order must be in "package_picked_up" status.
- *       Real-time tracking begins from this point.
+ *
+ *       **Real-time tracking begins from this point.**
+ *       Connect via WebSocket to receive location updates.
+ *       See WebSocketConnectionInfo schema for connection details.
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - $ref: '#/components/parameters/orderIdPath'
  *     responses:
  *       200:
- *         description: Delivery started successfully
+ *         description: Delivery started successfully. WebSocket tracking is now active.
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/SuccessResponse'
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     websocketInfo:
+ *                       $ref: '#/components/schemas/WebSocketConnectionInfo'
  *       400:
  *         $ref: '#/components/responses/BadRequestError'
  *       401:
@@ -758,6 +794,8 @@
  *       Update rider's current location during delivery.
  *       Alternative to WebSocket for location updates.
  *       Order must be in trackable status (confirmed, package_picked_up, in_transit, arrived_at_location).
+ *
+ *       **Note:** For real-time tracking, WebSocket is preferred. See WebSocketConnectionInfo schema.
  *     security:
  *       - bearerAuth: []
  *     parameters:
