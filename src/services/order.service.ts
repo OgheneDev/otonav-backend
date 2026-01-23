@@ -237,6 +237,7 @@ export class OrderService {
         customerName: users.name,
         customerPhone: users.phoneNumber,
         customerLocations: users.locations,
+        customerProfileImage: users.profileImage,
       })
       .from(orders)
       .innerJoin(organizations, eq(orders.orgId, organizations.id))
@@ -268,6 +269,7 @@ export class OrderService {
               email: users.email,
               name: users.name,
               phoneNumber: users.phoneNumber,
+              profileImage: users.profileImage,
               currentLocation: users.currentLocation,
               isActive: users.isActive,
             })
@@ -280,6 +282,8 @@ export class OrderService {
               id: users.id,
               name: users.name,
               email: users.email,
+              phoneNumber: users.phoneNumber,
+              profileImage: users.profileImage,
             })
             .from(users)
             .where(inArray(users.id, ownerIds))
@@ -325,6 +329,7 @@ export class OrderService {
         email: order.customerEmail,
         name: order.customerName,
         phoneNumber: order.customerPhone,
+        profileImage: order.customerProfileImage,
         locations: order.customerLocations,
       },
       rider: order.riderId ? riderMap.get(order.riderId) || null : null,
@@ -378,6 +383,7 @@ export class OrderService {
           name: true,
           phoneNumber: true,
           locations: true,
+          profileImage: true, // Added profile image for customer
         },
       }),
       order.riderId
@@ -390,6 +396,7 @@ export class OrderService {
               phoneNumber: true,
               currentLocation: true,
               isActive: true,
+              profileImage: true, // Added profile image for rider
             },
           })
         : Promise.resolve(null),
@@ -403,6 +410,7 @@ export class OrderService {
           id: true,
           name: true,
           email: true,
+          profileImage: true, // Added profile image for owner
         },
       });
     }
@@ -418,6 +426,7 @@ export class OrderService {
               id: owner.id,
               name: owner.name,
               email: owner.email,
+              profileImage: owner.profileImage, // Added profile image for owner
             }
           : null,
       },
