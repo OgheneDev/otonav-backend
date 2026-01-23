@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 import { authRoutes } from "./routes/auth.routes.js";
 import { riderRoutes } from "./routes/rider.routes.js";
 import { customerRoutes } from "./routes/customer.routes.js";
+import { organizationRoutes } from "./routes/organization.routes.js";
 import { orderRoutes } from "./routes/order.routes.js";
 import { errorHandler } from "./middleware/error.middleware.js";
 import dotenv from "dotenv";
@@ -93,6 +94,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/riders", riderRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/orders", orderRoutes);
+app.use("/api/organizations", organizationRoutes);
 //app.use("/dev", devRouter);
 
 app.get("/health", (req, res) => {

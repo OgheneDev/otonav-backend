@@ -1,41 +1,17 @@
-// routes/organization.routes.ts
 import { Router } from "express";
-import { organizationController } from "../controllers/organization.controller.js";
-import { authenticateToken } from "../middleware/auth.middleware.js";
+import { OrganizationController } from "@/controllers/organization.controller.js";
 
 const router = Router();
-
-// All organization routes require authentication
-router.use(authenticateToken);
+const organizationController = new OrganizationController();
 
 /**
- * @route   GET /api/organizations
- * @desc    Get user's organizations
- * @access  Private
+ * @route GET /api/organizations/:id
+ * @desc Get organization by ID
+ * @access Public (or add authentication middleware if needed)
  */
 router.get(
-  "/",
-  organizationController.getUserOrganizations.bind(organizationController)
+  "/organizations/:id",
+  organizationController.getOrganizationById.bind(organizationController),
 );
 
-/**
- * @route   POST /api/organizations/switch
- * @desc    Switch organization context
- * @access  Private
- */
-router.post(
-  "/switch",
-  organizationController.switchOrganization.bind(organizationController)
-);
-
-/**
- * @route   DELETE /api/organizations/:orgId/leave
- * @desc    Leave an organization
- * @access  Private
- */
-router.delete(
-  "/:orgId/leave",
-  organizationController.leaveOrganization.bind(organizationController)
-);
-
-export default router;
+export const organizationRoutes = router;
