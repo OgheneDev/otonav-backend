@@ -20,7 +20,7 @@ export interface CloudinaryOptions {
 
 export class CloudinaryService {
   static async uploadImage(
-    filePath: string,
+    filePathOrBase64: string,
     options: CloudinaryOptions = {},
   ): Promise<UploadResult> {
     try {
@@ -33,7 +33,11 @@ export class CloudinaryService {
         uploadOptions.transformation = options.transformation;
       }
 
-      const result = await cloudinary.uploader.upload(filePath, uploadOptions);
+      // Handle both file paths and base64 strings
+      const result = await cloudinary.uploader.upload(
+        filePathOrBase64,
+        uploadOptions,
+      );
 
       return {
         url: result.url,
@@ -57,14 +61,14 @@ export class CloudinaryService {
 
   static async updateImage(
     oldPublicId: string | null,
-    newFilePath: string,
+    newFilePathOrBase64: string,
     options: CloudinaryOptions = {},
   ): Promise<UploadResult> {
     if (oldPublicId) {
       await this.deleteImage(oldPublicId);
     }
 
-    return this.uploadImage(newFilePath, options);
+    return this.uploadImage(newFilePathOrBase64, options);
   }
 
   static getOptimizedProfileImageUrl(

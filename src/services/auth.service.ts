@@ -2455,25 +2455,28 @@ export const updateUserProfile = async (
 
   const updateData: any = {};
   let oldProfileImagePublicId: string | null = null;
-  let tempFilePath: string | null = null;
 
   try {
+    // --- Profile Image Handling (Simplified like your example) ---
     if (updates.profileImage !== undefined) {
+      // Handle image removal
       if (updates.profileImage === null || updates.profileImage === "") {
         if (user.profileImagePublicId) {
           await CloudinaryService.deleteImage(user.profileImagePublicId);
-          updateData.profileImage = null;
-          updateData.profileImagePublicId = null;
         }
-      } else if (updates.profileImage.startsWith("data:image/")) {
+        updateData.profileImage = null;
+        updateData.profileImagePublicId = null;
+      }
+      // Handle new image upload (base64 string)
+      else if (updates.profileImage.startsWith("data:image/")) {
+        // Store old public ID for cleanup if exists
         if (user.profileImagePublicId) {
           oldProfileImagePublicId = user.profileImagePublicId;
         }
 
-        tempFilePath = await saveUploadedImage(updates.profileImage);
-        const uploadResult = await CloudinaryService.updateImage(
-          oldProfileImagePublicId,
-          tempFilePath,
+        // Upload directly to Cloudinary
+        const uploadResult = await CloudinaryService.uploadImage(
+          updates.profileImage,
           {
             folder: "user_profiles",
             transformation: [
@@ -2486,12 +2489,18 @@ export const updateUserProfile = async (
 
         updateData.profileImage = uploadResult.secureUrl;
         updateData.profileImagePublicId = uploadResult.publicId;
-      } else if (updates.profileImage.startsWith("http")) {
+      }
+      // Keep existing URL (if it's already a URL)
+      else if (updates.profileImage.startsWith("http")) {
         updateData.profileImage = updates.profileImage;
-        updateData.profileImagePublicId = null;
+        // Don't change publicId if it's already a URL
+        if (!user.profileImagePublicId) {
+          updateData.profileImagePublicId = null;
+        }
       }
     }
 
+    // --- Other fields remain the same ---
     if (updates.name !== undefined) {
       updateData.name = updates.name;
     }
@@ -2506,6 +2515,7 @@ export const updateUserProfile = async (
       updateData.phoneNumber = updates.phoneNumber || null;
     }
 
+    // --- Locations handling (same as before) ---
     const currentLocations: Array<{ label: string; preciseLocation: string }> =
       user.locations || [];
 
@@ -2616,6 +2626,7 @@ export const updateUserProfile = async (
       updateData.otpType = "verify";
     }
 
+    // If no valid fields were sent
     if (Object.keys(updateData).length === 0) {
       throw new Error("No valid fields to update");
     }
@@ -2625,6 +2636,15 @@ export const updateUserProfile = async (
       .set(updateData)
       .where(eq(users.id, userId))
       .returning();
+
+    // Clean up old image after successful update
+    if (oldProfileImagePublicId) {
+      try {
+        await CloudinaryService.deleteImage(oldProfileImagePublicId);
+      } catch (cleanupError) {
+        console.error("Failed to delete old image:", cleanupError);
+      }
+    }
 
     if (updates.email && updateData.otpCode) {
       await sendVerificationOTPEmail(
@@ -2636,11 +2656,15 @@ export const updateUserProfile = async (
 
     return updatedUser;
   } catch (error) {
-    if (tempFilePath) {
+    // Clean up newly uploaded image if error occurs
+    if (
+      updateData.profileImagePublicId &&
+      oldProfileImagePublicId !== updateData.profileImagePublicId
+    ) {
       try {
-        await unlink(tempFilePath);
+        await CloudinaryService.deleteImage(updateData.profileImagePublicId);
       } catch (cleanupError) {
-        console.error("Failed to clean up temp file:", cleanupError);
+        console.error("Failed to clean up new image on error:", cleanupError);
       }
     }
     throw error;
