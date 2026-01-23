@@ -39,6 +39,36 @@ export interface RefreshTokenPayload {
   type: "refresh";
 }
 
+interface OrganizationDetail {
+  id: string;
+  name: string;
+  slug: string | null;
+  address: string;
+  createdAt: Date | null;
+  updatedAt: Date | null;
+  role: string;
+  isActive: boolean;
+  isSuspended: boolean;
+  joinedAt: Date | null;
+}
+
+interface UserResponse {
+  id: string;
+  email: string;
+  name: string | null;
+  role: string;
+  emailVerified: boolean;
+  createdAt: Date | null;
+  lastLoginAt: Date | null;
+  phoneNumber: string | null;
+  isProfileComplete: boolean;
+  registrationStatus: string;
+  profileImage: string | null;
+  locations?: Array<{ label: string; preciseLocation: string }>;
+  currentLocation?: string | null;
+  organizations?: OrganizationDetail[];
+}
+
 // --- Password Utilities ---
 export const hashPassword = async (password: string): Promise<string> => {
   return bcrypt.hash(password, 12);
@@ -883,7 +913,7 @@ export const authenticateUser = async (email: string, password: string) => {
   };
 };
 
-export const getUserById = async (userId: string) => {
+export const getUserById = async (userId: string): Promise<UserResponse> => {
   const user = await db
     .select(selectUserColumns)
     .from(users)
@@ -897,7 +927,7 @@ export const getUserById = async (userId: string) => {
 
   const profileComplete = isCustomerProfileComplete(user);
 
-  const response: any = {
+  const response: UserResponse = {
     id: user.id,
     email: user.email,
     name: user.name,
@@ -915,6 +945,43 @@ export const getUserById = async (userId: string) => {
     response.locations = user.locations || [];
   } else if (user.role === "rider") {
     response.currentLocation = user.currentLocation;
+  } else if (user.role === "owner") {
+    const orgDetails = await db
+      .select({
+        id: organizations.id,
+        name: organizations.name,
+        slug: organizations.slug,
+        address: organizations.address,
+        createdAt: organizations.createdAt,
+        updatedAt: organizations.updatedAt,
+        userRole: userOrganizations.role,
+        isActive: userOrganizations.isActive,
+        isSuspended: userOrganizations.isSuspended,
+        joinedAt: userOrganizations.joinedAt,
+      })
+      .from(userOrganizations)
+      .innerJoin(organizations, eq(userOrganizations.orgId, organizations.id))
+      .where(
+        and(
+          eq(userOrganizations.userId, userId),
+          eq(userOrganizations.isActive, true),
+        ),
+      );
+
+    if (orgDetails.length > 0) {
+      response.organizations = orgDetails.map((org) => ({
+        id: org.id,
+        name: org.name,
+        slug: org.slug,
+        address: org.address,
+        createdAt: org.createdAt,
+        updatedAt: org.updatedAt,
+        role: org.userRole,
+        isActive: org.isActive,
+        isSuspended: org.isSuspended,
+        joinedAt: org.joinedAt,
+      }));
+    }
   }
 
   return response;
