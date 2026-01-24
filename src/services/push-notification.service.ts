@@ -5,15 +5,20 @@ import { eq } from "drizzle-orm";
 
 // Initialize Firebase Admin SDK
 if (!admin.apps.length) {
-  const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+  let serviceAccount;
 
-  if (!serviceAccountPath) {
+  // Production: Use environment variable
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+  }
+  // Local Development: Use file
+  else if (process.env.FIREBASE_SERVICE_ACCOUNT_PATH) {
+    serviceAccount = require(process.env.FIREBASE_SERVICE_ACCOUNT_PATH);
+  } else {
     throw new Error(
-      "FIREBASE_SERVICE_ACCOUNT_PATH not set in environment variables",
+      "Firebase credentials not found. Set FIREBASE_SERVICE_ACCOUNT_KEY (prod) or FIREBASE_SERVICE_ACCOUNT_PATH (local)",
     );
   }
-
-  const serviceAccount = require(serviceAccountPath);
 
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
