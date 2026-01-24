@@ -117,8 +117,10 @@ export const users = pgTable("users", {
   invitationToken: text("invitation_token"),
   invitationTokenExpires: timestamp("invitation_token_expires"),
   phoneNumber: text("phone_number"),
+  fcmToken: text("fcm_token"),
   lastLoginAt: timestamp("last_login_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at"),
 });
 
 export const invitations = pgTable("invitations", {

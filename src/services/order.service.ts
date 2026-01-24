@@ -7,6 +7,7 @@ import {
 } from "../models/schema.js";
 import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { sendEmail } from "./email.service.js";
+import { pushNotificationService } from "./push-notification.service.js";
 
 export interface CreateOrderDTO {
   packageDescription: string;
@@ -186,7 +187,16 @@ export class OrderService {
         })
         .returning();
 
-      await this.sendAssignmentNotifications(order, customer, rider);
+      // Send notifications
+      await Promise.allSettled([
+        this.sendAssignmentNotifications(order, customer, rider),
+        pushNotificationService.notifyOrderCreated(
+          dto.customerId,
+          dto.riderId,
+          order.orderNumber,
+          dto.packageDescription,
+        ),
+      ]);
 
       return order;
     });
@@ -495,6 +505,19 @@ export class OrderService {
         })
         .where(eq(users.id, riderId));
 
+      // Get rider name for notification
+      const rider = await tx.query.users.findFirst({
+        where: eq(users.id, riderId),
+        columns: { name: true },
+      });
+
+      // Send push notification to customer
+      await pushNotificationService.notifyRiderAccepted(
+        order.customerId,
+        order.orderNumber,
+        rider?.name || "Rider",
+      );
+
       return updatedOrder;
     });
   }
@@ -545,6 +568,15 @@ export class OrderService {
         })
         .where(eq(orders.id, orderId))
         .returning();
+
+      // Send push notification to rider
+      if (order.riderId) {
+        await pushNotificationService.notifyLocationSet(
+          order.riderId,
+          order.orderNumber,
+          dto.locationLabel,
+        );
+      }
 
       return updatedOrder;
     });
@@ -644,30 +676,72 @@ export class OrderService {
   }
 
   async markPackagePickedUp(orderId: string, riderId: string) {
-    return await this.updateOrderStatus(
+    const order = await this.updateOrderStatus(
       orderId,
       riderId,
       "package_picked_up",
       "packagePickedUpAt",
     );
+
+    // Get rider name and send notification to customer
+    const rider = await db.query.users.findFirst({
+      where: eq(users.id, riderId),
+      columns: { name: true },
+    });
+
+    await pushNotificationService.notifyPackagePickedUp(
+      order.customerId,
+      order.orderNumber,
+      rider?.name || "Rider",
+    );
+
+    return order;
   }
 
   async startDelivery(orderId: string, riderId: string) {
-    return await this.updateOrderStatus(
+    const order = await this.updateOrderStatus(
       orderId,
       riderId,
       "in_transit",
       "deliveryStartedAt",
     );
+
+    // Get rider name and send notification to customer
+    const rider = await db.query.users.findFirst({
+      where: eq(users.id, riderId),
+      columns: { name: true },
+    });
+
+    await pushNotificationService.notifyDeliveryStarted(
+      order.customerId,
+      order.orderNumber,
+      rider?.name || "Rider",
+    );
+
+    return order;
   }
 
   async markArrivedAtLocation(orderId: string, riderId: string) {
-    return await this.updateOrderStatus(
+    const order = await this.updateOrderStatus(
       orderId,
       riderId,
       "arrived_at_location",
       "arrivedAtLocationAt",
     );
+
+    // Get rider name and send notification to customer
+    const rider = await db.query.users.findFirst({
+      where: eq(users.id, riderId),
+      columns: { name: true },
+    });
+
+    await pushNotificationService.notifyRiderArrived(
+      order.customerId,
+      order.orderNumber,
+      rider?.name || "Rider",
+    );
+
+    return order;
   }
 
   async confirmDelivery(orderId: string, riderId: string) {
@@ -704,6 +778,12 @@ export class OrderService {
         })
         .where(eq(orders.id, orderId))
         .returning();
+
+      // Send push notification to customer
+      await pushNotificationService.notifyDeliveryCompleted(
+        order.customerId,
+        order.orderNumber,
+      );
 
       return updatedOrder;
     });
@@ -894,6 +974,18 @@ export class OrderService {
       })
       .where(eq(orders.id, orderId))
       .returning();
+
+    // Notify all parties about cancellation
+    const notifyUsers: string[] = [order.customerId];
+    if (order.riderId) {
+      notifyUsers.push(order.riderId);
+    }
+
+    await pushNotificationService.notifyOrderCancelled(
+      notifyUsers,
+      order.orderNumber,
+      userRole,
+    );
 
     return updatedOrder;
   }
